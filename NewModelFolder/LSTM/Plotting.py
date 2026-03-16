@@ -46,8 +46,9 @@ def _find_latest_model(model_dir):
             pass
     if not versions:
         raise FileNotFoundError(f"No versioned run folders found in {model_dir}")
-    run_folder = os.path.join(model_dir, f"model_v{max(versions)}")
-    return os.path.join(run_folder, "model.pth")
+    latest_version = max(versions)
+    run_folder = os.path.join(model_dir, f"model_v{latest_version}")
+    return os.path.join(run_folder, f"model_v{latest_version}.pth")
 
 
 def _add_day_markers(ax):
