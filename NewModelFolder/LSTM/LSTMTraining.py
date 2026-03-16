@@ -121,7 +121,8 @@ def train_model(config, train_loader, val_loader, train_size, val_size,
 
     train_losses, val_losses = [], []
 
-    logger.info(f"Starting training for {config.epochs} epochs...") #TODO: Daniel
+    if logger is not None:
+        logger.info(f"Starting training for {config.epochs} epochs...")  # TODO: Daniel
 
     # Training loop
     for epoch in range(1, config.epochs + 1):
@@ -155,8 +156,11 @@ def train_model(config, train_loader, val_loader, train_size, val_size,
     torch.save(checkpoint, model_save_path)
 
 
-    logger.success(f"Training complete. Best model saved at epoch {checkpoint['epoch']} "
-        f"(val_loss={checkpoint['val_loss']:.4f})")
+    if logger is not None:
+        logger.success(
+            f"Training complete. Best model saved at epoch {checkpoint['epoch']} "
+            f"(val_loss={checkpoint['val_loss']:.4f})"
+        )
 
     # Save train/val loss plot alongside the checkpoint
     run_dir      = os.path.dirname(model_save_path)
@@ -164,7 +168,8 @@ def train_model(config, train_loader, val_loader, train_size, val_size,
     os.makedirs(plot_dir, exist_ok=True)
     loss_plot_path = os.path.join(plot_dir, "train_val_loss.png")
     plot_train_val_loss(train_losses, val_losses, checkpoint['epoch'], loss_plot_path)
-    logger.info(f"Loss curve saved to {loss_plot_path}")
+    if logger is not None:
+        logger.info(f"Loss curve saved to {loss_plot_path}")
 
     return best_val_loss, train_losses, val_losses
 

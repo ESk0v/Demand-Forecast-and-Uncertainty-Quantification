@@ -46,8 +46,9 @@ def _find_latest_model(model_dir):
             pass
     if not versions:
         raise FileNotFoundError(f"No versioned run folders found in {model_dir}")
-    run_folder = os.path.join(model_dir, f"model_v{max(versions)}")
-    return os.path.join(run_folder, "model.pth")
+    latest_version = max(versions)
+    run_folder = os.path.join(model_dir, f"model_v{latest_version}")
+    return os.path.join(run_folder, f"model_v{latest_version}.pth")
 
 
 def _add_day_markers(ax):
@@ -236,7 +237,7 @@ def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_s
 
     # Persistence baseline — last encoder abvaerk value (col 0), rescaled
     test_encoder = encoder_data[train_size + val_size:]
-    last_known   = test_encoder[:, -1, 0].numpy() * demand_std + demand_mean
+    last_known   = test_encoder[:, -1, 0].detach().cpu().numpy() * demand_std + demand_mean
     persist_pred = np.tile(last_known[:, None], (1, 168))
 
     persist_mse  = np.mean((persist_pred - targets_h) ** 2, axis=0)
@@ -389,4 +390,4 @@ def main(filePaths=None, logger=None, run_dir=None):
     # -----------------------------
     generate_evaluation_readme(plot_dir, best_epoch, checkpoint['val_loss'], preds_h.shape[0],
                                train_size, val_size, test_size, n_total,
-                               model_filename="../model.pth")
+                               model_filename=os.path.basename(model_path))

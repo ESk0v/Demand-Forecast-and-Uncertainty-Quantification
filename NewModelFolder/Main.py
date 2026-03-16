@@ -98,17 +98,20 @@ def RunTuning(local=False, n_trials=50, epochs=1, tune_patience=5, logger=None):
     logger.success("Hyperparameter Tuning complete!")
 
 def RunLstm(local=False, epochs=1, train_patience=5, logger=None):
-    logger.info("Starting LSTM training...")
+    if logger is not None:
+        logger.info("Starting LSTM training...")
     
     modelPath, version = getModelPath(LOCAL_MODELDIR_PATH if local else SERVER_MODELDIR_PATH)
-    logger.info(f"Model will be saved as model_v{version}.pth")
+    if logger is not None:
+        logger.info(f"Model will be saved as model_v{version}.pth")
     filePaths = [
         LOCAL_DATASET_PATH if local else SERVER_DATASET_PATH,
         modelPath
     ]
 
     train_model(filePaths=filePaths, epochs=epochs, patience=train_patience, logger=logger)
-    logger.success("Finished LSTM training")
+    if logger is not None:
+        logger.success("Finished LSTM training")
 
 
 def _resolve_model_paths(local=False, model_version=None):
@@ -147,14 +150,18 @@ def RunPlotting(local=False, model_version=None, logger=None):
     Args:
         model_version : int or None — version number to plot (default: latest).
     """
-    logger.info("Starting plotting...")
+    if logger is not None:
+        logger.info("Starting plotting...")
     filePaths, run_dir = _resolve_model_paths(local=local, model_version=model_version)
-    logger.info(f"Plotting model: {filePaths[1]}")
+    if logger is not None:
+        logger.info(f"Plotting model: {filePaths[1]}")
     generate_plots(filePaths=filePaths, logger=logger, run_dir=run_dir)
-    logger.success("Finished plotting")
+    if logger is not None:
+        logger.success("Finished plotting")
 
 def RunEnsemble(local=False, epochs=1, n_models=3, ensemble_patience=5, logger=None):
-    logger.info("Starting ensemble...")
+    if logger is not None:
+        logger.info("Starting ensemble...")
 
     model_dir = LOCAL_MODELDIR_PATH if local else SERVER_MODELDIR_PATH
     if not os.path.isdir(model_dir):
@@ -175,7 +182,8 @@ def RunEnsemble(local=False, epochs=1, n_models=3, ensemble_patience=5, logger=N
     ]
 
     EnsembleModel(filePaths=filePaths, epochs=epochs, n_models=n_models, patience=ensemble_patience, logger=logger)
-    logger.success("Finished Ensemble plotting")
+    if logger is not None:
+        logger.success("Finished Ensemble plotting")
 
 def Main():
     parser = argparse.ArgumentParser(description="LSTM Pipeline Controller")
