@@ -1,21 +1,18 @@
-import json
-import sys
 import pathlib
 import numpy as np
+import pandas as pd
 
-# Add LSTMModel directory to path for imports
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
-sys.path.append(str(SCRIPT_DIR.parent / 'LSTMModel'))
 
-from EvaluateModel import (
+from BaselineEvaluate import (
     residuals_plot,
     predictions_vs_actual_plot,
-    first_week_prediction_plot
+    first_week_prediction_plot,
 )
 
 # Paths
-DATASET_PATH = SCRIPT_DIR / 'Files' / 'dataset.json'
 PLOTS_DIR    = SCRIPT_DIR / 'BaselinePlots'
+DATASET_PATH = SCRIPT_DIR / 'Files' / 'RingkøbingData.csv'
 
 # --- Output toggles ---
 SAVE_PLOTS   = True
@@ -26,13 +23,10 @@ SHOW_PLOTS   = False
 # =============================================================================
 
 def load_abvaerk():
-    """Load the abvaerk (energy usage) values from dataset.json."""
-    with open(DATASET_PATH, 'r') as f:
-        data = json.load(f)
+    """Load the abvaerk (energy usage) values from the CSV dataset."""
+    df = pd.read_csv(DATASET_PATH, parse_dates=["dateTime"])
+    abvaerk = df["abvaerk"].interpolate(method='linear').bfill().ffill().to_numpy(dtype=np.float32)
 
-    abvaerk = np.array(data['targets'], dtype=np.float32)
-
-    # Check for NaN values
     nan_count = np.isnan(abvaerk).sum()
     if nan_count > 0:
         print(f"Warning: Found {nan_count} NaN values in targets")
