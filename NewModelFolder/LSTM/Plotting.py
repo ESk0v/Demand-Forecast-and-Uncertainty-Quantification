@@ -242,7 +242,7 @@ def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_s
 
     # Persistence baseline — last encoder abvaerk value (col 0), rescaled
     test_encoder = encoder_data[train_size + val_size:]
-    last_known   = test_encoder[:, -1, 0].numpy() * demand_std + demand_mean
+    last_known   = test_encoder[:, -1, 0].detach().cpu().numpy() * demand_std + demand_mean
     persist_pred = np.tile(last_known[:, None], (1, 168))
 
     persist_mse  = np.mean((persist_pred - targets_h) ** 2, axis=0)
