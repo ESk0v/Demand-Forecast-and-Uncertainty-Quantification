@@ -28,6 +28,8 @@ ENCODER_HISTORY = 168  # must match DatasetCreation.py
 
 DAY_HOURS  = [24, 48, 72, 96, 120, 144, 168]
 DAY_LABELS = ['1d', '2d', '3d', '4d', '5d', '6d', '7d']
+# Fixed y-range for residual diagnostics panel C (variance ratio)
+VAR_RATIO_YLIM = (0.0, 2.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +110,14 @@ def plot_actual_vs_predicted(preds_h, targets_h, save_path):
     """Plot 3 — Actual vs Predicted scatter at three forecast horizons."""
     rng = np.random.default_rng(42)
 
+    # Fixed axes for all panels (and across model runs on same dataset):
+    # derive from actual test-set values only so model output spread doesn't
+    # change the visual scale.
+    a_min = float(np.min(targets_h))
+    a_max = float(np.max(targets_h))
+    pad   = 0.03 * (a_max - a_min if a_max > a_min else 1.0)
+    fixed_lims = [a_min - pad, a_max + pad]
+
     def _scatter_panel(ax, horizon_idx, horizon_label):
         actual = targets_h[:, horizon_idx]
         pred   = preds_h[:, horizon_idx]
@@ -116,8 +126,10 @@ def plot_actual_vs_predicted(preds_h, targets_h, save_path):
         ss_tot = np.sum((actual - np.mean(actual)) ** 2)
         r2     = 1 - ss_res / (ss_tot if ss_tot != 0 else 1e-10)
         ax.scatter(actual + jitter, pred, alpha=0.3, s=4, color='steelblue')
-        lims = [min(actual.min(), pred.min()), max(actual.max(), pred.max())]
-        ax.plot(lims, lims, 'k--', linewidth=1.0, label='y = x (perfect)')
+        ax.plot(fixed_lims, fixed_lims, 'k--', linewidth=1.0, label='y = x (perfect)')
+        ax.set_xlim(fixed_lims)
+        ax.set_ylim(fixed_lims)
+        ax.set_aspect('equal', adjustable='box')
         ax.set_xlabel("Actual abvaerk (MWh)", fontsize=11)
         ax.set_ylabel("Predicted abvaerk (MWh)", fontsize=11)
         ax.set_title(f"Actual vs Predicted — {horizon_label}\nR² = {r2:.4f}", fontsize=11)
@@ -209,6 +221,7 @@ def plot_residual_diagnostics(preds_h, targets_h, test_start_global_idx, save_pa
                       label='over-dispersed')
     for h in DAY_HOURS:
         ax_c.axvline(x=h, color='gray', linestyle='--', alpha=0.4, linewidth=0.8)
+    ax_c.set_ylim(*VAR_RATIO_YLIM)
     ax_c.set_xlabel("Forecast Horizon (hours)", fontsize=11)
     ax_c.set_ylabel("Var(predicted) / Var(actual)", fontsize=11)
     ax_c.set_title("Predicted vs Actual Variance Ratio\nper Horizon", fontsize=12)
