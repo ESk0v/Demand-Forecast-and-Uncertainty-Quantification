@@ -221,7 +221,7 @@ def plot_residual_diagnostics(preds_h, targets_h, test_start_global_idx, save_pa
 
 def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_size,
                              demand_mean, demand_std, save_path):
-    """Plot 5 — Per-horizon MSE/RMSE/MAE/MAPE/R² vs persistence baseline.
+    """Plot 5 — Per-horizon RMSE/MAE/R² vs persistence baseline.
 
     The persistence baseline repeats the last known encoder abvaerk value for
     all 168 future horizons.  If the LSTM doesn't beat it, it adds no value.
@@ -229,11 +229,6 @@ def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_s
     mse_per_horizon  = np.mean((preds_h - targets_h) ** 2, axis=0)
     rmse_per_horizon = np.sqrt(mse_per_horizon)
     mae_per_horizon  = np.mean(np.abs(preds_h - targets_h), axis=0)
-
-    with np.errstate(divide='ignore', invalid='ignore'):
-        mape_per_sample  = np.abs((targets_h - preds_h) / targets_h) * 100
-        mape_per_sample  = np.where(np.isfinite(mape_per_sample), mape_per_sample, np.nan)
-    mape_per_horizon = np.nanmean(mape_per_sample, axis=0)
 
     ss_res_h = np.sum((targets_h - preds_h) ** 2, axis=0)
     ss_tot_h = np.sum((targets_h - targets_h.mean(axis=0, keepdims=True)) ** 2, axis=0)
@@ -247,21 +242,15 @@ def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_s
     persist_mse  = np.mean((persist_pred - targets_h) ** 2, axis=0)
     persist_rmse = np.sqrt(persist_mse)
     persist_mae  = np.mean(np.abs(persist_pred - targets_h), axis=0)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        persist_mape_s = np.abs((targets_h - persist_pred) / targets_h) * 100
-        persist_mape_s = np.where(np.isfinite(persist_mape_s), persist_mape_s, np.nan)
-    persist_mape = np.nanmean(persist_mape_s, axis=0)
     persist_r2   = 1 - np.sum((targets_h - persist_pred) ** 2, axis=0) / np.where(ss_tot_h == 0, 1e-10, ss_tot_h)
 
-    fig, axes_h = plt.subplots(5, 1, figsize=(14, 20), sharex=True)
+    fig, axes_h = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
     hours_r = range(1, 169)
 
     metrics = [
-        (axes_h[0], mse_per_horizon,  persist_mse,  'MSE',      'blue'),
-        (axes_h[1], rmse_per_horizon, persist_rmse, 'RMSE',     'purple'),
-        (axes_h[2], mae_per_horizon,  persist_mae,  'MAE',      'red'),
-        (axes_h[3], mape_per_horizon, persist_mape, 'MAPE (%)', 'green'),
-        (axes_h[4], r2_per_horizon,   persist_r2,   'R²',       'darkorange'),
+        (axes_h[0], rmse_per_horizon, persist_rmse, 'RMSE (MWh)', 'purple'),
+        (axes_h[1], mae_per_horizon,  persist_mae,  'MAE (MWh)',  'red'),
+        (axes_h[2], r2_per_horizon,   persist_r2,   'R²',         'darkorange'),
     ]
     for ax, lstm_vals, pers_vals, ylabel, color in metrics:
         ax.plot(hours_r, lstm_vals, color=color,  linewidth=1.2, label='LSTM')
@@ -273,12 +262,12 @@ def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_s
         _add_day_markers(ax)
 
     # R² = 0 means no better than always predicting the mean
-    axes_h[4].axhline(0.0, color='black', linestyle=':', linewidth=1.0, alpha=0.6,
+    axes_h[2].axhline(0.0, color='black', linestyle=':', linewidth=1.0, alpha=0.6,
                       label='R² = 0 (no better than mean)')
-    axes_h[4].legend(fontsize=9)
+    axes_h[2].legend(fontsize=9)
 
     axes_h[0].set_title("Per-Horizon Forecast Error vs Persistence Baseline (Test Set)", fontsize=14)
-    axes_h[4].set_xlabel("Forecast Horizon (hours)", fontsize=12)
+    axes_h[2].set_xlabel("Forecast Horizon (hours)", fontsize=12)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
