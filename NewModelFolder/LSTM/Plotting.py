@@ -401,4 +401,4 @@ def main(filePaths=None, logger=None, run_dir=None):
     # -----------------------------
     generate_evaluation_readme(plot_dir, best_epoch, checkpoint['val_loss'], preds_h.shape[0],
                                train_size, val_size, test_size, n_total,
-                               model_filename="../model.pth")
+                               model_filename=os.path.basename(model_path))
