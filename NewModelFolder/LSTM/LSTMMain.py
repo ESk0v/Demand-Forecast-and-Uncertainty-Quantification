@@ -5,7 +5,6 @@ import sys
 import torch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from LSTM.Plotting import main as generate_plots
 from LSTM.LSTMTraining import load_and_split_dataset, train_model
 from LSTM.GenerateREADME import generate_training_readme
 
@@ -61,9 +60,6 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
     # Load checkpoint for metadata
     checkpoint = torch.load(model_save_path, weights_only=False)
     logger.success("LSTM training completed successfully!")
-    logger.info("Generating plots...")
-
-    generate_plots(train_losses, val_losses, filePaths, logger, run_dir=run_dir)
     logger.info("Generating training README...")
 
     # Generate training README in run_dir

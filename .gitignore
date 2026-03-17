@@ -2,6 +2,8 @@
 /NewModelFolder/Files/RingkøbingData.csv
 /ServerReady/Data/dataset.pt
 /NewModelFolder/Files/dataset.pt
+/BaselineModel/Files/RingkøbingData.csv
+/LSTMModel/Files/RingkøbingData.csv
 
 #Pycache and pyc files ignored
 __pycache__/
