@@ -106,8 +106,13 @@ def plot_forecast_windows(preds_h, targets_h, test_start_global_idx, save_path):
     plt.close()
 
 
-def plot_actual_vs_predicted(preds_h, targets_h, save_path):
-    """Plot 3 — Actual vs Predicted scatter at three forecast horizons."""
+def plot_actual_vs_predicted(preds_h, targets_h, encoder_data, train_size, val_size,
+                             demand_mean, demand_std, save_path):
+    """Plot 3 — Actual vs Predicted scatter at three forecast horizons, vs persistence baseline.
+
+    Top row: LSTM predictions
+    Bottom row: Persistence baseline (last encoder value repeated)
+    """
     rng = np.random.default_rng(42)
 
     # Fixed axes for all panels (and across model runs on same dataset):
@@ -118,30 +123,47 @@ def plot_actual_vs_predicted(preds_h, targets_h, save_path):
     pad   = 0.03 * (a_max - a_min if a_max > a_min else 1.0)
     fixed_lims = [a_min - pad, a_max + pad]
 
-    def _scatter_panel(ax, horizon_idx, horizon_label):
-        actual = targets_h[:, horizon_idx]
-        pred   = preds_h[:, horizon_idx]
+    # Compute persistence baseline
+    test_encoder = encoder_data[train_size + val_size:]
+    last_known   = test_encoder[:, -1, 0].detach().cpu().numpy() * demand_std + demand_mean
+    persist_pred = np.tile(last_known[:, None], (1, 168))
+
+    def _scatter_panel(ax, actual, pred, horizon_label, model_name, color):
+        """Helper to plot a single scatter panel."""
         jitter = rng.normal(0, 0.02, size=actual.shape)
         ss_res = np.sum((actual - pred) ** 2)
         ss_tot = np.sum((actual - np.mean(actual)) ** 2)
         r2     = 1 - ss_res / (ss_tot if ss_tot != 0 else 1e-10)
-        ax.scatter(actual + jitter, pred, alpha=0.3, s=4, color='steelblue')
+        ax.scatter(actual + jitter, pred, alpha=0.3, s=4, color=color)
         ax.plot(fixed_lims, fixed_lims, 'k--', linewidth=1.0, label='y = x (perfect)')
         ax.set_xlim(fixed_lims)
         ax.set_ylim(fixed_lims)
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlabel("Actual abvaerk (MWh)", fontsize=11)
         ax.set_ylabel("Predicted abvaerk (MWh)", fontsize=11)
-        ax.set_title(f"Actual vs Predicted — {horizon_label}\nR² = {r2:.4f}", fontsize=11)
+        ax.set_title(f"{model_name} — {horizon_label}\nR² = {r2:.4f}", fontsize=11)
         ax.legend(fontsize=9)
         ax.grid(True, alpha=0.3)
 
-    fig, axes_sc = plt.subplots(1, 3, figsize=(22, 7))
-    _scatter_panel(axes_sc[0], horizon_idx=0,   horizon_label="1h Ahead (horizon 0)")
-    _scatter_panel(axes_sc[1], horizon_idx=23,  horizon_label="24h Ahead (horizon 23)")
-    _scatter_panel(axes_sc[2], horizon_idx=167, horizon_label="168h Ahead (horizon 167)")
+    fig, axes = plt.subplots(2, 3, figsize=(22, 14))
 
-    fig.suptitle("Actual vs Predicted at Three Forecast Horizons (Test Set)",
+    horizons = [
+        (0,   "1h Ahead (horizon 0)"),
+        (23,  "24h Ahead (horizon 23)"),
+        (167, "168h Ahead (horizon 167)"),
+    ]
+
+    # Top row: LSTM predictions (steelblue)
+    for col, (h_idx, h_label) in enumerate(horizons):
+        ax = axes[0, col]
+        _scatter_panel(ax, targets_h[:, h_idx], preds_h[:, h_idx], h_label, "LSTM", color='steelblue')
+
+    # Bottom row: Persistence baseline (coral)
+    for col, (h_idx, h_label) in enumerate(horizons):
+        ax = axes[1, col]
+        _scatter_panel(ax, targets_h[:, h_idx], persist_pred[:, h_idx], h_label, "Persistence Baseline", color='coral')
+
+    fig.suptitle("Actual vs Predicted at Three Forecast Horizons (Test Set)\nLSTM vs Persistence Baseline",
                  fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
@@ -385,7 +407,8 @@ def main(filePaths=None, logger=None, run_dir=None):
     if logger:
         logger.success("Saved: forecast windows plot")
 
-    plot_actual_vs_predicted(preds_h, targets_h, scatter_plot_path)
+    plot_actual_vs_predicted(preds_h, targets_h, encoder_data, train_size, val_size,
+                             demand_mean, demand_std, scatter_plot_path)
     if logger:
         logger.success("Saved: actual vs predicted scatter plot")
 

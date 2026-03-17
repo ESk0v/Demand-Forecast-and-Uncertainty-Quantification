@@ -15,7 +15,7 @@ class Config:
     encoder_features = 8
     decoder_features = 12
     hidden_size = 128
-    num_layers = 2
+    num_layers = 1
     dropout = 0.2
     context_dropout = 0.2
     epochs = 1
