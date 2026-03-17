@@ -5,6 +5,7 @@ import time
 from Data.DatasetCreation import main as create_dataset
 from HyperparameterTuning.HPTMain import hptmain
 from LSTM.LSTMMain import LSTMMain as train_model
+from LSTM.Plotting import main as generate_plots
 from Ensemble.EnsembleMain import main as EnsembleModel
 from Logger import setup_logger
 from LSTMModel import Config
@@ -97,22 +98,71 @@ def RunTuning(local=False, n_trials=50, epochs=1, tune_patience=5, logger=None):
     logger.success("Hyperparameter Tuning complete!")
 
 def RunLstm(local=False, epochs=1, train_patience=5, logger=None):
-    logger.info("Starting LSTM training...")
+    if logger is not None:
+        logger.info("Starting LSTM training...")
     
     modelPath, version = getModelPath(LOCAL_MODELDIR_PATH if local else SERVER_MODELDIR_PATH)
-    logger.info(f"Model will be saved as model_v{version}.pth")
+    if logger is not None:
+        logger.info(f"Model will be saved as model_v{version}.pth")
     filePaths = [
         LOCAL_DATASET_PATH if local else SERVER_DATASET_PATH,
         modelPath
     ]
 
     train_model(filePaths=filePaths, epochs=epochs, patience=train_patience, logger=logger)
-    logger.success("Finished LSTM plotting")
+    if logger is not None:
+        logger.success("Finished LSTM training")
+
+
+def _resolve_model_paths(local=False, model_version=None):
+    """Return (filePaths, run_dir) for a given model version (or latest if None)."""
+    model_dir = LOCAL_MODELDIR_PATH if local else SERVER_MODELDIR_PATH
+    if not os.path.isdir(model_dir):
+        raise FileNotFoundError(f"Model directory does not exist: {model_dir}")
+
+    if model_version is not None:
+        run_dir = os.path.join(model_dir, f"model_v{model_version}")
+        model_path = os.path.join(run_dir, f"model_v{model_version}.pth")
+    else:
+        existing = [f for f in os.listdir(model_dir)
+                    if os.path.isdir(os.path.join(model_dir, f)) and f.startswith("model_v")]
+        versions = [int(f.replace("model_v", "")) for f in existing
+                    if f.replace("model_v", "").isdigit()]
+        if not versions:
+            raise FileNotFoundError(f"No versioned model folders found in {model_dir}")
+        latest = max(versions)
+        run_dir = os.path.join(model_dir, f"model_v{latest}")
+        model_path = os.path.join(run_dir, f"model_v{latest}.pth")
+
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model checkpoint not found: {model_path}")
+
+    filePaths = [
+        LOCAL_DATASET_PATH if local else SERVER_DATASET_PATH,
+        model_path,
+    ]
+    return filePaths, run_dir
+
+
+def RunPlotting(local=False, model_version=None, logger=None):
+    """Generate evaluation plots for a trained model.
+
+    Args:
+        model_version : int or None — version number to plot (default: latest).
+    """
+    if logger is not None:
+        logger.info("Starting plotting...")
+    filePaths, run_dir = _resolve_model_paths(local=local, model_version=model_version)
+    if logger is not None:
+        logger.info(f"Plotting model: {filePaths[1]}")
+    generate_plots(filePaths=filePaths, logger=logger, run_dir=run_dir)
+    if logger is not None:
+        logger.success("Finished plotting")
 
 def RunEnsemble(local=False, epochs=1, n_models=3, ensemble_patience=5, logger=None):
-    logger.info("Starting ensemble...")
+    if logger is not None:
+        logger.info("Starting ensemble...")
 
-    # Always find the latest model_vN/ folder automatically
     model_dir = LOCAL_MODELDIR_PATH if local else SERVER_MODELDIR_PATH
     if not os.path.isdir(model_dir):
         raise FileNotFoundError(f"Model directory does not exist: {model_dir}")
@@ -132,7 +182,8 @@ def RunEnsemble(local=False, epochs=1, n_models=3, ensemble_patience=5, logger=N
     ]
 
     EnsembleModel(filePaths=filePaths, epochs=epochs, n_models=n_models, patience=ensemble_patience, logger=logger)
-    logger.success("Finished Ensemble plotting")
+    if logger is not None:
+        logger.success("Finished Ensemble plotting")
 
 def Main():
     parser = argparse.ArgumentParser(description="LSTM Pipeline Controller")
@@ -145,7 +196,7 @@ def Main():
         "--mode",
         type=str,
         required=True,
-        choices=["tune", "train", "ensemble", "full"],
+        choices=["tune", "train", "plot", "ensemble", "full"],
         help="Which part of the pipeline to run"
     )
 
@@ -167,6 +218,8 @@ def Main():
     parser.add_argument("--train_patience", type=int, default=5, help="Early-stopping patience (epochs) during training")
     # --ensemble_patience <int> → early stopping patience (in epochs) used when training ensemble members (default: 5)
     parser.add_argument("--ensemble_patience", type=int, default=5, help="Early-stopping patience (epochs) during ensemble training")
+    # --model_version <int> → which model_vN to plot (default: latest)
+    parser.add_argument("--model_version", type=int, default=None, help="Model version to plot (default: latest)")
 
     args = parser.parse_args()
 
@@ -176,6 +229,7 @@ def Main():
     ensembleLogger = setup_logger("Ensemble", local=args.local)
     HPTLogger = setup_logger("Hyperparameter Tuning", local=args.local)
     datasetLogger = setup_logger("Dataset", local=args.local)
+    plotLogger = setup_logger("Plotting", local=args.local)
 
     ensure_dataset_exists(local=args.local, logger=datasetLogger)
 
@@ -196,6 +250,13 @@ def Main():
             epochs=args.train_epochs,
             train_patience=args.train_patience,
             logger=trainLogger
+        )
+
+    elif args.mode == "plot":
+        RunPlotting(
+            local=args.local,
+            model_version=args.model_version,
+            logger=plotLogger
         )
 
     elif args.mode == "ensemble":
@@ -229,6 +290,15 @@ def Main():
         )
         train_time = time.perf_counter() - start
         mainLogger.debug(f"LSTM training completed in {train_time:.2f} seconds")
+
+        start = time.perf_counter()
+        RunPlotting(
+            local=args.local,
+            model_version=None,   # always plot the model just trained (latest)
+            logger=plotLogger
+        )
+        plot_time = time.perf_counter() - start
+        mainLogger.debug(f"Plotting completed in {plot_time:.2f} seconds")
 
         start = time.perf_counter()
         RunEnsemble(

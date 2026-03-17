@@ -4,6 +4,7 @@ from torch.utils.data import TensorDataset, Subset
 import numpy as np
 import os
 import sys
+import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from LSTMModel import LSTMForecast
 
@@ -78,6 +79,31 @@ def save_checkpoint(model, optimizer, config, epoch, val_loss, train_losses, val
     }, model_save_path)
 
 
+def plot_train_val_loss(train_losses, val_losses, best_epoch, save_path):
+    """Plot training vs validation loss curves and save to disk."""
+    fig, ax = plt.subplots(figsize=(10, 5))
+    epochs_range = range(1, len(train_losses) + 1)
+    ax.plot(epochs_range, train_losses, label="Train Loss",      linewidth=1.5, marker='o', markersize=2)
+    ax.plot(epochs_range, val_losses,   label="Validation Loss", linewidth=1.5, marker='o', markersize=2)
+    ax.axvline(x=best_epoch, color='green', linestyle='--', alpha=0.7, label=f'Best epoch ({best_epoch})')
+    ax.set_xlabel("Epoch", fontsize=12)
+    ax.set_ylabel("GaussianNLL Loss", fontsize=12)
+    ax.set_title("Train vs Validation Loss (GaussianNLL)", fontsize=14)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+
+    all_losses = train_losses + val_losses
+    if (len(all_losses) > 0
+            and min(all_losses) > 0
+            and max(all_losses) / min(all_losses) > 10):
+        ax.set_yscale('log')
+        ax.set_ylabel("Normalized Gaussian NLL Loss (log scale)", fontsize=12)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+
+
 def train_model(config, train_loader, val_loader, train_size, val_size,
                 model_save_path, logger=None, patience=5):
 
@@ -95,7 +121,8 @@ def train_model(config, train_loader, val_loader, train_size, val_size,
 
     train_losses, val_losses = [], []
 
-    logger.info(f"Starting training for {config.epochs} epochs...") #TODO: Daniel
+    if logger is not None:
+        logger.info(f"Starting training for {config.epochs} epochs...")  # TODO: Daniel
 
     # Training loop
     for epoch in range(1, config.epochs + 1):
@@ -129,8 +156,20 @@ def train_model(config, train_loader, val_loader, train_size, val_size,
     torch.save(checkpoint, model_save_path)
 
 
-    logger.success(f"Training complete. Best model saved at epoch {checkpoint['epoch']} "
-        f"(val_loss={checkpoint['val_loss']:.4f})")
+    if logger is not None:
+        logger.success(
+            f"Training complete. Best model saved at epoch {checkpoint['epoch']} "
+            f"(val_loss={checkpoint['val_loss']:.4f})"
+        )
+
+    # Save train/val loss plot alongside the checkpoint
+    run_dir      = os.path.dirname(model_save_path)
+    plot_dir     = os.path.join(run_dir, "Plots")
+    os.makedirs(plot_dir, exist_ok=True)
+    loss_plot_path = os.path.join(plot_dir, "train_val_loss.png")
+    plot_train_val_loss(train_losses, val_losses, checkpoint['epoch'], loss_plot_path)
+    if logger is not None:
+        logger.info(f"Loss curve saved to {loss_plot_path}")
 
     return best_val_loss, train_losses, val_losses
 
