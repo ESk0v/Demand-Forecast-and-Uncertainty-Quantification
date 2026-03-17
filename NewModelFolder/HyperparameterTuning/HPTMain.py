@@ -29,7 +29,7 @@ def hptmain(n_trials, epochs, patience, local, filePaths, logger=None):
     study = optuna.create_study(
         study_name=study_name,
         direction='minimize',
-        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=10),
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=30),
         sampler=optuna.samplers.TPESampler(seed=42)
     )
     
@@ -59,6 +59,7 @@ def hptmain(n_trials, epochs, patience, local, filePaths, logger=None):
             f"                                                             hidden size: {study.best_trial.params['hidden_size']}\n"
             f"                                                             number of layers: {study.best_trial.params['num_layers']}\n"
             f"                                                             dropout: {study.best_trial.params['dropout']:.6f}\n"
+            f"                                                             context dropout: {study.best_trial.params['context_dropout']:.6f}\n"
             f"                                                             batch size: {study.best_trial.params['batch_size']}\n"
             f"                                                             learning rate: {study.best_trial.params['learning_rate']:.6f}")
 

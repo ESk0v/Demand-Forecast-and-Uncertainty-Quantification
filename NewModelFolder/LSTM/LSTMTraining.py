@@ -38,11 +38,10 @@ def train_epoch(model, train_loader, optimizer, criterion, device, train_size):
         enc, dec, tgt = enc.to(device), dec.to(device), tgt.to(device)
         optimizer.zero_grad()
         output, _ = model(enc, dec)
-        variance = torch.ones_like(output, device=device)
-        loss = criterion(output, tgt, variance)
+        loss = criterion(output, tgt)
         loss.backward()
         # Gradient clipping to prevent gradient explosion with 168-step sequences
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
         optimizer.step()
         epoch_loss += loss.item() * enc.size(0)
 
@@ -58,8 +57,7 @@ def validate_epoch(model, val_loader, criterion, device, val_size):
         for enc, dec, tgt in val_loader:
             enc, dec, tgt = enc.to(device), dec.to(device), tgt.to(device)
             output, _ = model(enc, dec)
-            variance = torch.ones_like(output, device=device)
-            val_loss_epoch += criterion(output, tgt, variance).item() * enc.size(0)
+            val_loss_epoch += criterion(output, tgt).item() * enc.size(0)
 
     val_loss = val_loss_epoch / val_size
     return val_loss
@@ -83,9 +81,9 @@ def train_model(config, train_loader, val_loader, train_size, val_size,
 
     # Model, Loss, Optimizer
     model = LSTMForecast(config).to(config.device)
-    criterion = nn.GaussianNLLLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=1e-3)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=(patience/2))
 
     # Early stopping
     patience = patience
@@ -108,19 +106,20 @@ def train_model(config, train_loader, val_loader, train_size, val_size,
 
         scheduler.step(val_loss)
 
+        
         # Early stopping + save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             epochs_no_improve = 0
             best_epoch = epoch
+            logger.info(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}, Best epoch = {best_epoch}")
             save_checkpoint(model, optimizer, config, epoch, val_loss, train_losses, val_losses, model_save_path)
         else:
+            logger.info(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}, Best epoch = {best_epoch}")
             epochs_no_improve += 1
             if epochs_no_improve >= patience:
                 logger.info(f"Early stopping at epoch {epoch}")
                 break
-
-        logger.info(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}, Best epoch = {best_epoch}")
 
     # Save final loss curves into the checkpoint
     checkpoint = torch.load(model_save_path, weights_only=False)
@@ -133,4 +132,3 @@ def train_model(config, train_loader, val_loader, train_size, val_size,
         f"(val_loss={checkpoint['val_loss']:.4f})")
 
     return best_val_loss, train_losses, val_losses
-
