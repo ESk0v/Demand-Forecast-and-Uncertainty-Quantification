@@ -16,10 +16,10 @@ def train_model(config, train_loader, val_loader, train_size, val_size, device,
                 trial=None, max_epochs=None, patience=None, logger=None):
 
     model = LSTMForecast(config).to(device)
-    criterion = nn.GaussianNLLLoss()
+    criterion = nn.MSELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=3
+        optimizer, mode='min', factor=0.5, patience=10
     )
     
     best_val_loss = np.inf
@@ -44,8 +44,7 @@ def train_model(config, train_loader, val_loader, train_size, val_size, device,
             # Mixed precision forward + loss
             with torch.amp.autocast(device_type='cuda', enabled=(device == "cuda")):
                 output, _ = model(enc, dec)
-                variance = torch.ones_like(output, device=device)
-                loss = criterion(output, tgt, variance)
+                loss = criterion(output, tgt)
                 loss = loss / accumulation_steps  # scale for gradient accumulation
 
             # Backward with GradScaler
@@ -53,7 +52,7 @@ def train_model(config, train_loader, val_loader, train_size, val_size, device,
 
             if (batch_idx + 1) % accumulation_steps == 0:
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
@@ -63,7 +62,7 @@ def train_model(config, train_loader, val_loader, train_size, val_size, device,
         # Handle remaining gradients if not divisible
         if (batch_idx + 1) % accumulation_steps != 0:
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
@@ -77,8 +76,7 @@ def train_model(config, train_loader, val_loader, train_size, val_size, device,
             for enc, dec, tgt in val_loader:
                 enc, dec, tgt = enc.to(device), dec.to(device), tgt.to(device)
                 output, _ = model(enc, dec)
-                variance = torch.ones_like(output, device=device)
-                val_loss_epoch += criterion(output, tgt, variance).item() * enc.size(0)
+                val_loss_epoch += criterion(output, tgt).item() * enc.size(0)
         val_loss = val_loss_epoch / val_size
         
         scheduler.step(val_loss)
@@ -87,7 +85,9 @@ def train_model(config, train_loader, val_loader, train_size, val_size, device,
         if trial is not None:
             trial.report(val_loss, epoch)
             if trial.should_prune():
-                raise optuna.TrialPruned()
+                #raise optuna.TrialPruned()
+                logger.warning(f"Trial should be pruned at epoch {epoch} with val loss {val_loss:.6f}")
+                break
         
         # Early stopping
         if val_loss < best_val_loss:
@@ -119,12 +119,12 @@ def trialSuggestions(trial: Trial, patience=None, train_dataset=None, val_datase
     config = Config()
     
     # Suggest hyperparameters - OPTIMIZED RANGES
-    config.hidden_size = trial.suggest_int('hidden_size', 64, 256, step=32)
-    config.num_layers = trial.suggest_int('num_layers', 1, 4)
-    config.dropout = trial.suggest_float('dropout', 0.05, 0.25)
-    # INCREASED MINIMUM BATCH SIZE for faster training
-    config.batch_size = trial.suggest_categorical('batch_size', [16, 32, 64])
-    config.learning_rate = trial.suggest_float('learning_rate', 1e-4, 5e-4, log=True)
+    config.hidden_size     = trial.suggest_int('hidden_size', 32, 128, step=32)
+    config.num_layers      = trial.suggest_int('num_layers', 1, 3)
+    config.dropout         = trial.suggest_float('dropout', 0.1, 0.4)
+    config.context_dropout = trial.suggest_float('context_dropout', 0.05, 0.3)
+    config.batch_size      = trial.suggest_categorical('batch_size', [32, 64, 128])
+    config.learning_rate   = trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True)
     
     config.device = device
     
@@ -132,6 +132,7 @@ def trialSuggestions(trial: Trial, patience=None, train_dataset=None, val_datase
                 f"                                                             \033[1mhidden size     :\033[0m\033[37m {config.hidden_size}\n"
                 f"                                                             \033[1mnumber of layers:\033[0m\033[37m {config.num_layers}\n"
                 f"                                                             \033[1mdropout         :\033[0m\033[37m {config.dropout:.4f}\n"
+                f"                                                             \033[1mcontext dropout :\033[0m\033[37m {config.context_dropout:.4f}\n"
                 f"                                                             \033[1mbatch size      :\033[0m\033[37m {config.batch_size}\n"
                 f"                                                             \033[1mlearning rate   :\033[0m\033[37m {config.learning_rate:.6g}")
     

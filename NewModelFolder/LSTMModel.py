@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import json
 import os
-import Logger
 
 # -----------------------------
 # CONFIG
@@ -14,10 +13,11 @@ class Config:
     encoder_history = 168
     forecast_length = 168
     encoder_features = 8
-    decoder_features = 11
+    decoder_features = 12
     hidden_size = 128
-    num_layers = 2
+    num_layers = 1
     dropout = 0.2
+    context_dropout = 0.2
     epochs = 1
     batch_size = 64
     learning_rate = 1e-3
@@ -114,84 +114,60 @@ class LSTMForecast(nn.Module):
             dropout=config.dropout if config.num_layers > 1 else 0.0
         )
 
+        self.dropout = nn.Dropout(config.dropout)  # ← add this line here
+        self.context_dropout = nn.Dropout(config.context_dropout)  # ← add this line here
+
         # ─── OUTPUT PROJECTION ──────────────────────────────────────────────────
         # Projects the decoder's hidden state at each timestep from hidden_size
         # dimensions down to output_size (e.g. 1 for univariate point forecast,
         # or N for multi-target / quantile forecasting).
         #
         #   ŷ_t = W · h_t + b     where W ∈ ℝ^{output_size × hidden_size}
-        self.fc = nn.Linear(config.hidden_size, 2)
+        
+        self.fc_mu      = nn.Linear(config.hidden_size, 1)  # trained in stage 1
+        self.fc_log_var = nn.Linear(config.hidden_size, 1)  # trained in stage 2
+
         self._init_weights()
 
     def _init_weights(self):
         for name, param in self.named_parameters():
-            # ===== INPUT-HIDDEN WEIGHTS (weight_ih) — Xavier Uniform =====
-            # These weights connect the external input x_t to the four LSTM gates
-            # (input, forget, output, gate) at each timestep.
-            #
-            # Xavier Uniform initialization scales the weights based on the number
-            # of incoming and outgoing connections (fan_in, fan_out), keeping the
-            # variance of activations consistent across layers. This prevents the
-            # signal from shrinking or exploding as it passes forward through the network.
-            #
-            # Paper: Glorot & Bengio (2010) — "Understanding the difficulty of training
-            # deep feedforward neural networks"
-            # https://proceedings.mlr.press/v9/glorot10a.html
+
+            # LSTM input-hidden weights
             if 'weight_ih' in name:
                 nn.init.xavier_uniform_(param.data)
-            
-            # ===== HIDDEN-HIDDEN WEIGHTS (weight_hh) — Orthogonal =====
-            # These are the recurrent weights — they connect the hidden state h_{t-1}
-            # back into the LSTM cell at the next timestep. This is the weight matrix
-            # that gets multiplied repeatedly across every timestep in your sequence.
-            #
-            # With 168 timesteps, this matrix is applied 168 times in sequence.
-            # If its eigenvalues are > 1, gradients explode. If < 1, they vanish.
-            # Orthogonal initialization produces a matrix whose eigenvalues all have
-            # magnitude exactly 1, keeping the gradient signal stable across the
-            # entire sequence length during backpropagation.
-            #
-            # This is the most impactful initialization in your model given your
-            # long sequence length of 168 timesteps.
-            #
-            # Paper: Saxe, McClelland & Ganguli (2014) — "Exact solutions to the
-            # nonlinear dynamics of learning in deep linear networks"
-            # https://arxiv.org/abs/1312.6120
+
+            # LSTM hidden-hidden weights — orthogonal for gradient stability
+            # across 168 timesteps
             elif 'weight_hh' in name:
                 nn.init.orthogonal_(param.data)
-            
-            # ===== BIASES — Zero Initialization =====
-            # Biases are set to zero as a neutral, clean starting point.
-            # There are no strong theoretical reasons to initialize biases
-            # differently — zero is standard and works well in practice.
-            #
-            # One known exception: the forget gate bias in LSTMs is sometimes
-            # initialized to 1.0 instead of 0.0, so the network starts by
-            # "remembering everything" and learns to forget selectively.
-            # This can help with very long sequences but is not always necessary.
-            #
-            # Paper: Jozefowicz, Zaremba & Sutskever (2015) — "An Empirical
-            # Exploration of Recurrent Network Architectures" (see forget gate section)
-            # https://proceedings.mlr.press/v37/jozefowicz15.html
-            elif 'bias' in name:
+
+            # LSTM biases — zeros with forget gate set to 1.0
+            elif 'bias' in name and 'fc' not in name:
+                nn.init.constant_(param.data, 0)
+                n = param.size(0)
+                param.data[n // 4 : n // 2].fill_(1.0)  # forget gate bias
+
+            # Output projection weights
+            elif 'fc_mu.weight' in name or 'fc_log_var.weight' in name:
+                nn.init.xavier_uniform_(param.data)
+
+            # Output projection biases
+            elif 'fc_mu.bias' in name or 'fc_log_var.bias' in name:
                 nn.init.constant_(param.data, 0)
 
     def forward(self, encoder_input, decoder_input):
-        # Encoder
         _, (hidden, cell) = self.encoder_lstm(encoder_input)
 
-        # Decoder
+        hidden = self.context_dropout(hidden)
+        cell   = self.context_dropout(cell)
+
         decoder_output, _ = self.decoder_lstm(decoder_input, (hidden, cell))
+        decoder_output = self.dropout(decoder_output)
 
-        # Project to mean and log variance
-        output = self.fc(decoder_output)  # (batch, horizon, 2)
-
-        mu = output[..., 0]
-        log_var = output[..., 1]
-
-        # Clamp for numerical stability
+        mu      = self.fc_mu(decoder_output).squeeze(-1)
+        log_var = self.fc_log_var(decoder_output).squeeze(-1)
         log_var = torch.clamp(log_var, min=-10, max=5)
 
         return mu, log_var
-
+    
 Config.load_from_file()

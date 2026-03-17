@@ -1,13 +1,11 @@
 import pandas as pd
 import numpy as np
 import torch
-import argparse
 from tqdm import tqdm
-import logging
 
 
-def main(local = False, filePaths = None, logger=None):
-    csv_file = filePaths[0]
+def main(local=False, filePaths=None, logger=None):
+    csv_file    = filePaths[0]
     output_path = filePaths[1]
 
     encoder_history = 168  # 1 week of past data
@@ -17,7 +15,7 @@ def main(local = False, filePaths = None, logger=None):
     logger.info(f"Loaded dataset")
 
     # -----------------------------
-    # Interpolate missing values (instead of filling with 0)
+    # Interpolate missing values
     # -----------------------------
     df['abvaerk'] = df['abvaerk'].interpolate(method='linear').bfill().ffill()
 
@@ -25,87 +23,100 @@ def main(local = False, filePaths = None, logger=None):
     for col in forecast_features:
         if col in df.columns:
             df[col] = df[col].interpolate(method='linear').bfill().ffill()
-    
-    # -----------------------------
-    # Standardize demand (abvaerk)
-    # -----------------------------
-    demand_mean = df['abvaerk'].mean()
-    demand_std  = df['abvaerk'].std()
-    df['abvaerk'] = (df['abvaerk'] - demand_mean) / demand_std
 
     # -----------------------------
-    # Normalise encoder: outdoor temperature (z-score)
+    # Build forecast column lists
     # -----------------------------
-    toutdoor_mean = df['toutdoor'].mean()
-    toutdoor_std  = df['toutdoor'].std()
-    df['toutdoor'] = (df['toutdoor'] - toutdoor_mean) / toutdoor_std
-
-    # -----------------------------
-    # Normalise decoder forecast features
-    # temperature  → z-score            (symmetric, contains negatives)
-    # humidity     → z-score            (tight, symmetric)
-    # cloud cover  → z-score            (bimodal but bounded)
-    # wind speed   → log1p then z-score (right-skewed, occasional storm outliers)
-    # precipitation→ log1p then z-score (82 % zeros, heavy right tail)
-    # -----------------------------
-
-    # Collect the raw forecast columns into flat series for stat computation.
-    # We use only the _0 column family because all forecsast steps share the
-    # same physical variable and should use consistent stats.
-
-    def _flat(cols):
-        """Stack all forecast-horizon columns into one 1-D array for fitting."""
-        return df[cols].values.flatten()
-
     temperature_cols = [f"temperature_{i}"      for i in range(forecast_length)]
     humidity_cols    = [f"relativeHumidity_{i}"  for i in range(forecast_length)]
     wind_cols        = [f"windSpeed_{i}"         for i in range(forecast_length)]
     precip_cols      = [f"precipitation_{i}"     for i in range(forecast_length)]
     cloud_cols       = [f"cloudCover_{i}"        for i in range(forecast_length)]
+    forecast_cols_all = [temperature_cols, humidity_cols, wind_cols, precip_cols, cloud_cols]
 
-    # -- temperature (z-score) -------------------------------------------
-    temp_mean = float(np.mean(_flat(temperature_cols)))
-    temp_std  = float(np.std (_flat(temperature_cols)))
+    # -----------------------------
+    # Train/val/test split boundary
+    # -----------------------------
+    val_ratio  = 0.1
+    test_ratio = 0.1
+
+    n_total_windows = len(df) - encoder_history - forecast_length
+    test_size  = int(n_total_windows * test_ratio)
+    val_size   = int(n_total_windows * val_ratio)
+    train_size = n_total_windows - val_size - test_size
+
+    # Store boundary index only — do NOT slice train_df here.
+    # Slicing before transforms creates a pandas view that may not
+    # reflect in-place modifications to df (log transforms applied below).
+    # All normalisation stats are computed from df.iloc[:train_size] AFTER
+    # transforms to guarantee correctness.
+    train_end = train_size
+
+    logger.info(
+        f"Split sizes (windows): train={train_size} | val={val_size} | test={test_size} | "
+        f"Normalisation computed on rows 0–{train_size - 1} (training rows only)"
+    )
+
+    # -----------------------------
+    # Normalisation — fit on training rows only, apply to full df
+    # Stats computed directly from df.iloc[:train_end] to avoid
+    # pandas view/copy ambiguity with pre-sliced train_df
+    # -----------------------------
+
+    # demand
+    demand_mean = float(df.iloc[:train_end]['abvaerk'].mean())
+    demand_std  = float(df.iloc[:train_end]['abvaerk'].std())
+    df['abvaerk'] = (df['abvaerk'] - demand_mean) / demand_std
+
+    # encoder outdoor temperature
+    toutdoor_mean = float(df.iloc[:train_end]['toutdoor'].mean())
+    toutdoor_std  = float(df.iloc[:train_end]['toutdoor'].std())
+    df['toutdoor'] = (df['toutdoor'] - toutdoor_mean) / toutdoor_std
+
+    # temperature forecast columns
+    temp_mean = float(df.iloc[:train_end][temperature_cols].values.mean())
+    temp_std  = float(df.iloc[:train_end][temperature_cols].values.std())
     df[temperature_cols] = (df[temperature_cols] - temp_mean) / temp_std
 
-    # -- humidity (z-score) -----------------------------------------------
-    hum_mean = float(np.mean(_flat(humidity_cols)))
-    hum_std  = float(np.std (_flat(humidity_cols)))
+    # humidity forecast columns
+    hum_mean = float(df.iloc[:train_end][humidity_cols].values.mean())
+    hum_std  = float(df.iloc[:train_end][humidity_cols].values.std())
     df[humidity_cols] = (df[humidity_cols] - hum_mean) / hum_std
 
-    # -- cloud cover (z-score) --------------------------------------------
-    cloud_mean = float(np.mean(_flat(cloud_cols)))
-    cloud_std  = float(np.std (_flat(cloud_cols)))
+    # cloud cover forecast columns
+    cloud_mean = float(df.iloc[:train_end][cloud_cols].values.mean())
+    cloud_std  = float(df.iloc[:train_end][cloud_cols].values.std())
     df[cloud_cols] = (df[cloud_cols] - cloud_mean) / cloud_std
 
-    # -- wind speed (log1p then z-score) ----------------------------------
+    # wind speed — log1p THEN compute stats from training rows only
+    # Critical: stats must be computed AFTER log transform is applied to df
+    # so that df.iloc[:train_end] reflects the transformed values
     df[wind_cols] = np.log1p(df[wind_cols])
-    wind_log_mean = float(np.mean(_flat(wind_cols)))
-    wind_log_std  = float(np.std (_flat(wind_cols)))
+    wind_log_mean = float(df.iloc[:train_end][wind_cols].values.mean())
+    wind_log_std  = float(df.iloc[:train_end][wind_cols].values.std())
     df[wind_cols] = (df[wind_cols] - wind_log_mean) / wind_log_std
 
-    # -- precipitation (log1p then z-score) --------------------------------
+    # precipitation — log1p THEN compute stats from training rows only
     df[precip_cols] = np.log1p(df[precip_cols])
-    precip_log_mean = float(np.mean(_flat(precip_cols)))
-    precip_log_std  = float(np.std (_flat(precip_cols)))
+    precip_log_mean = float(df.iloc[:train_end][precip_cols].values.mean())
+    precip_log_std  = float(df.iloc[:train_end][precip_cols].values.std())
     df[precip_cols] = (df[precip_cols] - precip_log_mean) / precip_log_std
 
-    # Bundle all normalisation stats so downstream code can invert transforms
     norm_stats = {
-        'demand_mean':      demand_mean,
-        'demand_std':       demand_std,
-        'toutdoor_mean':    toutdoor_mean,
-        'toutdoor_std':     toutdoor_std,
-        'temp_mean':        temp_mean,
-        'temp_std':         temp_std,
-        'hum_mean':         hum_mean,
-        'hum_std':          hum_std,
-        'cloud_mean':       cloud_mean,
-        'cloud_std':        cloud_std,
-        'wind_log_mean':    wind_log_mean,
-        'wind_log_std':     wind_log_std,
-        'precip_log_mean':  precip_log_mean,
-        'precip_log_std':   precip_log_std,
+        'demand_mean':     demand_mean,
+        'demand_std':      demand_std,
+        'toutdoor_mean':   toutdoor_mean,
+        'toutdoor_std':    toutdoor_std,
+        'temp_mean':       temp_mean,
+        'temp_std':        temp_std,
+        'hum_mean':        hum_mean,
+        'hum_std':         hum_std,
+        'cloud_mean':      cloud_mean,
+        'cloud_std':       cloud_std,
+        'wind_log_mean':   wind_log_mean,
+        'wind_log_std':    wind_log_std,
+        'precip_log_mean': precip_log_mean,
+        'precip_log_std':  precip_log_std,
     }
 
     logger.info(
@@ -119,73 +130,88 @@ def main(local = False, filePaths = None, logger=None):
     )
 
     # -----------------------------
-    # Prepare forecast column lists (week ahead)
-    # NOTE: columns are already normalised above — no further scaling needed
-    # -----------------------------
-    forecast_cols_all = [temperature_cols, humidity_cols, wind_cols, precip_cols, cloud_cols]
-
-    # -----------------------------
-    # Prepare time features (fixed to avoid fragmentation warning)
+    # Time features
     # -----------------------------
     def get_time_features(df):
-        hour = df['dateTime'].dt.hour
+        hour    = df['dateTime'].dt.hour
         weekday = df['dateTime'].dt.weekday
-        month = df['dateTime'].dt.month
+        month   = df['dateTime'].dt.month
 
-        # Create all time features at once using pd.concat to avoid fragmentation
         time_features = pd.DataFrame({
-            'hour_sin': np.sin(2 * np.pi * hour / 24),
-            'hour_cos': np.cos(2 * np.pi * hour / 24),
+            'hour_sin':    np.sin(2 * np.pi * hour    / 24),
+            'hour_cos':    np.cos(2 * np.pi * hour    / 24),
             'weekday_sin': np.sin(2 * np.pi * weekday / 7),
             'weekday_cos': np.cos(2 * np.pi * weekday / 7),
-            'month_sin': np.sin(2 * np.pi * month / 12),
-            'month_cos': np.cos(2 * np.pi * month / 12)
+            'month_sin':   np.sin(2 * np.pi * month   / 12),
+            'month_cos':   np.cos(2 * np.pi * month   / 12),
         }, index=df.index)
-        
-        # Concatenate once instead of adding columns one by one
-        df = pd.concat([df, time_features], axis=1)
-        return df
+
+        return pd.concat([df, time_features], axis=1)
 
     df = get_time_features(df)
 
     # -----------------------------
-    # Build dataset
+    # Build tensors
     # -----------------------------
-    encoder_features = ['abvaerk', 'toutdoor', 'hour_sin', 'hour_cos', 'weekday_sin', 'weekday_cos', 'month_sin', 'month_cos']
-    decoder_time_features = ['hour_sin', 'hour_cos', 'weekday_sin', 'weekday_cos', 'month_sin', 'month_cos']
+    encoder_features      = ['abvaerk', 'toutdoor', 'hour_sin', 'hour_cos',
+                              'weekday_sin', 'weekday_cos', 'month_sin', 'month_cos']
+    decoder_time_features = ['hour_sin', 'hour_cos',
+                              'weekday_sin', 'weekday_cos', 'month_sin', 'month_cos']
 
     encoder_data = []
     decoder_data = []
-    target_data = []
+    target_data  = []
 
     logger.info("Building encoder/decoder/target tensors...")
-    
-    for i in tqdm(range(len(df) - encoder_history - forecast_length), disable=True):
-        encoder_slice = df.iloc[i:i+encoder_history][encoder_features].values.astype(np.float32)
 
-        decoder_time_slice = df.iloc[i+encoder_history:i+encoder_history+forecast_length][decoder_time_features].values.astype(np.float32)
+    for i in tqdm(range(n_total_windows), disable=True):
+        enc_start = i
+        enc_end   = i + encoder_history
+        dec_end   = enc_end + forecast_length
 
+        # Encoder: historical window
+        encoder_slice = df.iloc[enc_start:enc_end][encoder_features].values.astype(np.float32)
+
+        # Decoder time features: future timestamps
+        decoder_time_slice = df.iloc[enc_end:dec_end][decoder_time_features].values.astype(np.float32)
+
+        # Decoder forecast: use the single forecast issued at enc_end
+        forecast_row = df.iloc[enc_end]
         decoder_forecast_slice = np.zeros((forecast_length, 5), dtype=np.float32)
         for j, cols in enumerate(forecast_cols_all):
-            decoder_forecast_slice[:, j] = df.iloc[i+encoder_history:i+encoder_history+forecast_length][cols].values[:, np.arange(forecast_length)].diagonal()
+            decoder_forecast_slice[:, j] = forecast_row[cols].values[:forecast_length]
 
-        decoder_slice = np.concatenate([decoder_time_slice, decoder_forecast_slice], axis=1)
+        # Last known demand value at encoder boundary — already normalised
+        last_demand     = float(df.iloc[enc_end - 1]['abvaerk'])
+        last_demand_col = np.full((forecast_length, 1), last_demand, dtype=np.float32)
 
-        target_slice = df.iloc[i+encoder_history:i+encoder_history+forecast_length]['abvaerk'].values.astype(np.float32)
+        decoder_slice = np.concatenate([
+            decoder_time_slice,      # (168, 6)
+            decoder_forecast_slice,  # (168, 5)
+            last_demand_col          # (168, 1)
+        ], axis=1)                   # → (168, 12)
+
+        # Target: future demand
+        target_slice = df.iloc[enc_end:dec_end]['abvaerk'].values.astype(np.float32)
 
         encoder_data.append(encoder_slice)
         decoder_data.append(decoder_slice)
         target_data.append(target_slice)
 
-    encoder_data = np.stack(encoder_data)
-    decoder_data = np.stack(decoder_data)
-    target_data = np.stack(target_data)
-    
+    encoder_tensor = torch.from_numpy(np.stack(encoder_data))
+    decoder_tensor = torch.from_numpy(np.stack(decoder_data))
+    target_tensor  = torch.from_numpy(np.stack(target_data))
+
     torch.save({
-        'encoder': torch.from_numpy(encoder_data),
-        'decoder': torch.from_numpy(decoder_data),
-        'target':  torch.from_numpy(target_data),
-        **norm_stats,   # demand_mean/std, toutdoor, temp, hum, cloud, wind_log, precip_log
+        'encoder': encoder_tensor,
+        'decoder': decoder_tensor,
+        'target':  target_tensor,
+        **norm_stats,
     }, output_path)
+
+    logger.info(
+        f"Tensors saved — encoder: {encoder_tensor.shape}, "
+        f"decoder: {decoder_tensor.shape}, target: {target_tensor.shape}"
+    )
 
     return output_path
