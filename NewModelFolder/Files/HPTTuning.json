@@ -1,8 +1,0 @@
-{
-  "hidden_size": 96,
-  "num_layers": 4,
-  "dropout": 0.39279757672456206,
-  "context_dropout": 0.19966462104925914,
-  "batch_size": 32,
-  "learning_rate": 0.0005399484409787432
-}
