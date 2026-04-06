@@ -2,7 +2,7 @@
 Plotting — Evaluation plots for the trained LSTM model.
 =========================================================
 Loads the saved checkpoint and dataset, rebuilds the model, runs inference
-on the validation and test sets, and generates all evaluation plots.
+on the test set, and generates all evaluation plots.
 
 Can be run independently after training is complete:
     python3 Plotting.py --local
@@ -17,18 +17,15 @@ import sys
 import torch
 from torch.utils.data import DataLoader, TensorDataset, Subset
 
-# LSTMModel.py lives in the parent directory (NewModelFolder/)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from LSTMModel import Config, LSTMForecast
 from LSTM.GenerateREADME import generate_evaluation_readme
 
-# Dataset starts at 2023-01-01 01:00, one row per hour, no gaps
 DATASET_START   = pd.Timestamp("2023-01-01 01:00")
-ENCODER_HISTORY = 168  # must match DatasetCreation.py
+ENCODER_HISTORY = 168
 
 DAY_HOURS  = [24, 48, 72, 96, 120, 144, 168]
 DAY_LABELS = ['1d', '2d', '3d', '4d', '5d', '6d', '7d']
-# Fixed y-range for residual diagnostics panel C (variance ratio)
 VAR_RATIO_YLIM = (0.0, 2.0)
 
 
@@ -37,7 +34,6 @@ VAR_RATIO_YLIM = (0.0, 2.0)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _find_latest_model(model_dir):
-    """Scan model_dir for the highest model_vN folder and return its .pth path."""
     existing = [f for f in os.listdir(model_dir)
                 if os.path.isdir(os.path.join(model_dir, f)) and f.startswith("model_v")]
     versions = []
@@ -54,7 +50,6 @@ def _find_latest_model(model_dir):
 
 
 def _add_day_markers(ax):
-    """Add vertical day-boundary lines and labels to an axes."""
     for h, lbl in zip(DAY_HOURS, DAY_LABELS):
         ax.axvline(x=h, color='gray', linestyle='--', alpha=0.4, linewidth=0.8)
         ax.annotate(lbl, xy=(h, 1.02), xycoords=('data', 'axes fraction'),
@@ -62,7 +57,6 @@ def _add_day_markers(ax):
 
 
 def _date_label_for(idx, test_start_global_idx):
-    """Return a human-readable date range string for a test-set sample index."""
     global_idx   = test_start_global_idx + idx
     window_start = DATASET_START + pd.Timedelta(hours=global_idx + ENCODER_HISTORY)
     window_end   = window_start + pd.Timedelta(hours=167)
@@ -70,30 +64,38 @@ def _date_label_for(idx, test_start_global_idx):
             f"→ {window_end.strftime('%Y-%m-%d %H:%M')}"), window_start
 
 
+def _get_split_indices(n_total, val_ratio=0.1, cal_ratio=0.05, test_ratio=0.1):
+    """
+    Reproduce the exact same 4-way chronological split used in LSTMTraining.py.
+    Returns (train_size, val_size, cal_size, test_size).
+    """
+    val_size   = int(n_total * val_ratio)
+    cal_size   = int(n_total * cal_ratio)
+    test_size  = int(n_total * test_ratio)
+    train_size = n_total - val_size - cal_size - test_size
+    return train_size, val_size, cal_size, test_size
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Plot functions
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-def plot_forecast_windows(preds_h, targets_h, test_start_global_idx, save_path):
-    """Plot 2 — Up to three example 168-hour forecast windows from the test set.
-
-    When only one sample is provided a single panel is shown instead of three.
-    """
-    n_test_samples = preds_h.shape[0]
+def plot_forecast_windows(q10, q50, q90, targets_h, test_start_global_idx, save_path):
+    n_test_samples = q50.shape[0]
     n_panels       = min(n_test_samples, 3)
     sample_indices = np.linspace(0, n_test_samples - 1, n_panels, dtype=int)
     hours          = np.arange(1, 169)
 
     fig, axes = plt.subplots(1, n_panels, figsize=(max(8, 22 // 3 * n_panels), 6),
                              squeeze=False)
-    axes = axes[0]   # shape (n_panels,)
+    axes = axes[0]
 
     for ax, idx in zip(axes, sample_indices):
         label, _ = _date_label_for(idx, test_start_global_idx)
-        window_mae = np.mean(np.abs(targets_h[idx] - preds_h[idx]))
-        ax.plot(hours, targets_h[idx], label='Actual',    linewidth=1.5, color='blue')
-        ax.plot(hours, preds_h[idx],   label='Predicted', linewidth=1.5, color='red', alpha=0.8)
+        window_mae = np.mean(np.abs(targets_h[idx] - q50[idx]))
+        ax.plot(hours, targets_h[idx], label='Actual', linewidth=1.5, color='blue')
+        ax.plot(hours, q50[idx], label='Median (q50)', linewidth=1.5, color='red', alpha=0.8)
+        ax.fill_between(hours, q10[idx], q90[idx], color='red', alpha=0.2, label='q10-q90 interval')
         ax.set_title(f"{label}\n(MAE: {window_mae:.4f})", fontsize=9)
         ax.set_xlabel("Forecast Hour", fontsize=9)
         ax.set_ylabel("abvaerk (MWh)", fontsize=9)
@@ -106,30 +108,21 @@ def plot_forecast_windows(preds_h, targets_h, test_start_global_idx, save_path):
     plt.close()
 
 
-def plot_actual_vs_predicted(preds_h, targets_h, encoder_data, train_size, val_size,
+def plot_actual_vs_predicted(preds_h, targets_h, encoder_data, train_size, val_size, cal_size,
                              demand_mean, demand_std, save_path):
-    """Plot 3 — Actual vs Predicted scatter at three forecast horizons, vs persistence baseline.
-
-    Top row: LSTM predictions
-    Bottom row: Persistence baseline (last encoder value repeated)
-    """
     rng = np.random.default_rng(42)
 
-    # Fixed axes for all panels (and across model runs on same dataset):
-    # derive from actual test-set values only so model output spread doesn't
-    # change the visual scale.
     a_min = float(np.min(targets_h))
     a_max = float(np.max(targets_h))
     pad   = 0.03 * (a_max - a_min if a_max > a_min else 1.0)
     fixed_lims = [a_min - pad, a_max + pad]
 
-    # Compute persistence baseline
-    test_encoder = encoder_data[train_size + val_size:]
+    # Persistence: last known encoder value for the test set
+    test_encoder = encoder_data[train_size + val_size + cal_size:]
     last_known   = test_encoder[:, -1, 0].detach().cpu().numpy() * demand_std + demand_mean
     persist_pred = np.tile(last_known[:, None], (1, 168))
 
     def _scatter_panel(ax, actual, pred, horizon_label, model_name, color):
-        """Helper to plot a single scatter panel."""
         jitter = rng.normal(0, 0.02, size=actual.shape)
         ss_res = np.sum((actual - pred) ** 2)
         ss_tot = np.sum((actual - np.mean(actual)) ** 2)
@@ -153,15 +146,13 @@ def plot_actual_vs_predicted(preds_h, targets_h, encoder_data, train_size, val_s
         (167, "168h Ahead (horizon 167)"),
     ]
 
-    # Top row: LSTM predictions (steelblue)
     for col, (h_idx, h_label) in enumerate(horizons):
-        ax = axes[0, col]
-        _scatter_panel(ax, targets_h[:, h_idx], preds_h[:, h_idx], h_label, "LSTM", color='steelblue')
+        _scatter_panel(axes[0, col], targets_h[:, h_idx], preds_h[:, h_idx],
+                       horizon_label=h_label, model_name="LSTM", color='steelblue')
 
-    # Bottom row: Persistence baseline (coral)
     for col, (h_idx, h_label) in enumerate(horizons):
-        ax = axes[1, col]
-        _scatter_panel(ax, targets_h[:, h_idx], persist_pred[:, h_idx], h_label, "Persistence Baseline", color='coral')
+        _scatter_panel(axes[1, col], targets_h[:, h_idx], persist_pred[:, h_idx],
+                       horizon_label=h_label, model_name="Persistence Baseline", color='coral')
 
     fig.suptitle("Actual vs Predicted at Three Forecast Horizons (Test Set)\nLSTM vs Persistence Baseline",
                  fontsize=14, fontweight='bold')
@@ -171,41 +162,23 @@ def plot_actual_vs_predicted(preds_h, targets_h, encoder_data, train_size, val_s
 
 
 def plot_residual_diagnostics(preds_h, targets_h, test_start_global_idx, save_path):
-    """Plot 4 — Residual diagnostics: MAE over time, quantile heatmap, variance ratio.
-
-    Panel A — MAE per window over time.
-      Reveals non-stationarity: error spikes at winter peaks, season
-      transitions, or holidays that the model failed to generalise.
-
-    Panel B — Quantile error heatmap (horizon × percentile).
-      Shows the full distribution of absolute errors at every forecast
-      step, not just the mean. Reveals whether tail errors grow faster
-      than the median at longer horizons — critical for planning.
-
-    Panel C — Predicted vs actual variance ratio per horizon.
-      Ratio near 1.0 means the model's spread matches reality.
-      Ratio < 1 → under-dispersed (mean regression).
-      Ratio > 1 → over-dispersed.
-    """
     n_test_samples = preds_h.shape[0]
 
     mae_per_window = np.mean(np.abs(targets_h - preds_h), axis=1)
-    window_dates   = [DATASET_START + pd.Timedelta(hours=(test_start_global_idx + i + ENCODER_HISTORY))
-                      for i in range(n_test_samples)]
+    window_dates = [DATASET_START + pd.Timedelta(hours=(test_start_global_idx + i + ENCODER_HISTORY))
+                    for i in range(n_test_samples)]
 
     abs_errors  = np.abs(targets_h - preds_h)
     percentiles = [5, 10, 25, 50, 75, 90, 95]
     heatmap     = np.percentile(abs_errors, percentiles, axis=0)
 
-    pred_var   = np.var(preds_h,   axis=0)
+    pred_var   = np.var(preds_h, axis=0)
     actual_var = np.var(targets_h, axis=0)
     var_ratio  = pred_var / np.where(actual_var == 0, 1e-10, actual_var)
 
     fig = plt.figure(figsize=(18, 14))
-    gs_r = gridspec.GridSpec(2, 2, figure=fig, hspace=0.35, wspace=0.3,
-                             height_ratios=[1, 1.2])
+    gs_r = gridspec.GridSpec(2, 2, figure=fig, hspace=0.35, wspace=0.3, height_ratios=[1, 1.2])
 
-    # Panel A — residuals over time (spans full top row)
     ax_a = fig.add_subplot(gs_r[0, :])
     ax_a.plot(window_dates, mae_per_window, linewidth=0.8, color='steelblue', alpha=0.7)
     rolling = pd.Series(mae_per_window).rolling(window=168, min_periods=1).mean().values
@@ -216,11 +189,9 @@ def plot_residual_diagnostics(preds_h, targets_h, test_start_global_idx, save_pa
     ax_a.legend(fontsize=9)
     ax_a.grid(True, alpha=0.3)
 
-    # Panel B — quantile heatmap (bottom-left)
     ax_b = fig.add_subplot(gs_r[1, 0])
     im = ax_b.imshow(heatmap, aspect='auto', origin='lower',
-                     extent=[1, 168, -0.5, len(percentiles) - 0.5],
-                     cmap='YlOrRd')
+                     extent=[1, 168, -0.5, len(percentiles)-0.5], cmap='YlOrRd')
     ax_b.set_yticks(range(len(percentiles)))
     ax_b.set_yticklabels([f"p{p}" for p in percentiles], fontsize=9)
     ax_b.set_xlabel("Forecast Horizon (hours)", fontsize=11)
@@ -230,17 +201,13 @@ def plot_residual_diagnostics(preds_h, targets_h, test_start_global_idx, save_pa
         ax_b.axvline(x=h, color='white', linestyle='--', linewidth=0.6, alpha=0.6)
     plt.colorbar(im, ax=ax_b, label='Absolute Error (MWh)')
 
-    # Panel C — variance ratio (bottom-right)
     ax_c = fig.add_subplot(gs_r[1, 1])
     ax_c.plot(range(1, 169), var_ratio, color='darkorange', linewidth=1.4)
-    ax_c.axhline(1.0, color='black', linestyle='--', linewidth=0.9,
-                 label='ratio = 1 (perfect dispersion)')
+    ax_c.axhline(1.0, color='black', linestyle='--', linewidth=0.9, label='ratio = 1 (perfect dispersion)')
     ax_c.fill_between(range(1, 169), var_ratio, 1.0,
-                      where=(var_ratio < 1.0), alpha=0.2, color='steelblue',
-                      label='under-dispersed (mean regression)')
+                      where=(var_ratio < 1.0), alpha=0.2, color='steelblue', label='under-dispersed')
     ax_c.fill_between(range(1, 169), var_ratio, 1.0,
-                      where=(var_ratio > 1.0), alpha=0.2, color='red',
-                      label='over-dispersed')
+                      where=(var_ratio > 1.0), alpha=0.2, color='red', label='over-dispersed')
     for h in DAY_HOURS:
         ax_c.axvline(x=h, color='gray', linestyle='--', alpha=0.4, linewidth=0.8)
     ax_c.set_ylim(*VAR_RATIO_YLIM)
@@ -255,13 +222,8 @@ def plot_residual_diagnostics(preds_h, targets_h, test_start_global_idx, save_pa
     plt.close()
 
 
-def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_size,
+def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_size, cal_size,
                              demand_mean, demand_std, save_path):
-    """Plot 5 — Per-horizon RMSE/MAE/R² vs persistence baseline.
-
-    The persistence baseline repeats the last known encoder abvaerk value for
-    all 168 future horizons.  If the LSTM doesn't beat it, it adds no value.
-    """
     mse_per_horizon  = np.mean((preds_h - targets_h) ** 2, axis=0)
     rmse_per_horizon = np.sqrt(mse_per_horizon)
     mae_per_horizon  = np.mean(np.abs(preds_h - targets_h), axis=0)
@@ -270,8 +232,8 @@ def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_s
     ss_tot_h = np.sum((targets_h - targets_h.mean(axis=0, keepdims=True)) ** 2, axis=0)
     r2_per_horizon = 1 - ss_res_h / np.where(ss_tot_h == 0, 1e-10, ss_tot_h)
 
-    # Persistence baseline — last encoder abvaerk value (col 0), rescaled
-    test_encoder = encoder_data[train_size + val_size:]
+    # Persistence: last known encoder value for the test set
+    test_encoder = encoder_data[train_size + val_size + cal_size:]
     last_known   = test_encoder[:, -1, 0].detach().cpu().numpy() * demand_std + demand_mean
     persist_pred = np.tile(last_known[:, None], (1, 168))
 
@@ -297,14 +259,70 @@ def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_s
         ax.grid(True, alpha=0.3)
         _add_day_markers(ax)
 
-    # R² = 0 means no better than always predicting the mean
     axes_h[2].axhline(0.0, color='black', linestyle=':', linewidth=1.0, alpha=0.6,
                       label='R² = 0 (no better than mean)')
     axes_h[2].legend(fontsize=9)
-
     axes_h[0].set_title("Per-Horizon Forecast Error vs Persistence Baseline (Test Set)", fontsize=14)
     axes_h[2].set_xlabel("Forecast Horizon (hours)", fontsize=12)
 
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+
+
+def plot_quantile_coverage(q10_h, q90_h, targets_h, u_alpha, save_path):
+    """
+    Coverage per horizon for raw q10-q90 and conformal-calibrated intervals.
+    Both are shown on the same axes so the effect of calibration is visible.
+    """
+    hours = range(1, 169)
+
+    # Raw interval coverage
+    raw_coverage = ((targets_h >= q10_h) & (targets_h <= q90_h)).mean(axis=0) * 100
+
+    # Calibrated interval coverage
+    q10_cal = q10_h - u_alpha
+    q90_cal = q90_h + u_alpha
+    cal_coverage = ((targets_h >= q10_cal) & (targets_h <= q90_cal)).mean(axis=0) * 100
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+    ax.plot(hours, raw_coverage, color='steelblue', linewidth=1.5, label='Raw q10-q90 coverage')
+    ax.plot(hours, cal_coverage, color='green',     linewidth=1.5, label=f'Calibrated coverage (u_alpha={u_alpha:.4f})')
+    ax.axhline(80, color='black',  linestyle='--', linewidth=1.0, label='Nominal 80% (raw interval target)')
+    ax.axhline(90, color='orange', linestyle='--', linewidth=1.0, label='Nominal 90% (calibrated target)')
+    ax.set_xlabel("Forecast Horizon (hours)", fontsize=12)
+    ax.set_ylabel("Coverage (%)", fontsize=12)
+    ax.set_title("Prediction Interval Coverage per Horizon\nRaw q10-q90 vs Conformal-Calibrated", fontsize=13)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    for h in DAY_HOURS:
+        ax.axvline(x=h, color='gray', linestyle='--', alpha=0.3, linewidth=0.8)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+
+
+def plot_pinball_loss(q10_h, q50_h, q90_h, targets_h, save_path):
+    def pinball(y_true, y_pred, q):
+        diff = y_true - y_pred
+        return np.mean(np.maximum(q * diff, (q - 1) * diff), axis=0)
+
+    hours    = range(1, 169)
+    pin_q10  = pinball(targets_h, q10_h, 0.1)
+    pin_q50  = pinball(targets_h, q50_h, 0.5)
+    pin_q90  = pinball(targets_h, q90_h, 0.9)
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+    ax.plot(hours, pin_q10, label='q10', color='red')
+    ax.plot(hours, pin_q50, label='q50', color='blue')
+    ax.plot(hours, pin_q90, label='q90', color='green')
+    ax.set_xlabel("Forecast Horizon (hours)", fontsize=12)
+    ax.set_ylabel("Pinball Loss", fontsize=12)
+    ax.set_title("Per-Horizon Pinball Loss (Quantile Forecast)", fontsize=13)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    for h in DAY_HOURS:
+        ax.axvline(x=h, color='gray', linestyle='--', alpha=0.3, linewidth=0.8)
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
     plt.close()
@@ -317,17 +335,12 @@ def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_s
 def main(filePaths=None, logger=None, run_dir=None):
     """
     Generate evaluation plots from a trained model checkpoint.
-    The train/val loss plot is handled by LSTMTraining.py during training.
 
     Args:
         filePaths : [dataset_path, model_path]
         logger    : Logger instance (optional).
         run_dir   : Directory under which a Plots/ sub-folder is created.
     """
-
-    # -----------------------------
-    # Paths
-    # -----------------------------
     model_path   = filePaths[1]
     dataset_path = filePaths[0]
     plot_dir     = os.path.join(run_dir, "Plots")
@@ -337,93 +350,115 @@ def main(filePaths=None, logger=None, run_dir=None):
     scatter_plot_path   = os.path.join(plot_dir, "actual_vs_predicted.png")
     residuals_plot_path = os.path.join(plot_dir, "residuals.png")
     horizon_plot_path   = os.path.join(plot_dir, "per_horizon_metrics.png")
+    coverage_plot_path  = os.path.join(plot_dir, "quantile_coverage.png")
+    pinball_plot_path   = os.path.join(plot_dir, "pinball_loss.png")
 
-    # -----------------------------
-    # Load checkpoint
-    # -----------------------------
+    # ── Load checkpoint ────────────────────────────────────────────────────────
     checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
     best_epoch = checkpoint['epoch']
+    u_alpha    = float(checkpoint.get('conformal_u_alpha', 0.0))
     if logger:
-        logger.info(f"Checkpoint loaded (best epoch: {best_epoch}, val_loss: {checkpoint['val_loss']:.4f})")
+        logger.info(
+            f"Checkpoint loaded — best epoch: {best_epoch}  "
+            f"val_loss: {checkpoint['val_loss']:.4f}  "
+            f"conformal_u_alpha: {u_alpha:.4f}"
+        )
 
-    # -----------------------------
-    # Load dataset
-    # -----------------------------
+    # ── Load dataset ───────────────────────────────────────────────────────────
     dataset      = torch.load(dataset_path, weights_only=False)
     encoder_data = dataset['encoder']
     decoder_data = dataset['decoder']
     target_data  = dataset['target']
     full_dataset = TensorDataset(encoder_data, decoder_data, target_data)
 
-    val_ratio, test_ratio = 0.1, 0.1
-    n_total    = len(full_dataset)
-    test_size  = int(n_total * test_ratio)
-    val_size   = int(n_total * val_ratio)
-    train_size = n_total - val_size - test_size
+    # 4-way split — must match LSTMTraining.py exactly
+    n_total                             = len(full_dataset)
+    train_size, val_size, cal_size, test_size = _get_split_indices(n_total)
+    test_start  = train_size + val_size + cal_size
+    test_end    = test_start + test_size
 
-    test_dataset = Subset(full_dataset, range(train_size + val_size, n_total))
+    if logger:
+        logger.info(
+            f"Split — train: {train_size}  val: {val_size}  "
+            f"cal: {cal_size}  test: {test_size}  (total: {n_total})"
+        )
+
+    test_dataset = Subset(full_dataset, range(test_start, test_end))
     config       = Config()
     test_loader  = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False)
 
-    # -----------------------------
-    # Rebuild model and run inference
-    # -----------------------------
+    # ── Inference ──────────────────────────────────────────────────────────────
     model = LSTMForecast(config).to(config.device)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
 
-    all_preds_h, all_targets_h = [], []
+    all_q10, all_q50, all_q90, all_targets = [], [], [], []
     with torch.no_grad():
         for enc, dec, tgt in test_loader:
             enc, dec = enc.to(config.device), dec.to(config.device)
-            mu, log_var = model(enc, dec)
-            all_preds_h.append(mu.cpu().numpy())
-            all_targets_h.append(tgt.numpy())
+            q10, q50, q90 = model(enc, dec)
+            all_q10.append(q10.cpu().numpy())
+            all_q50.append(q50.cpu().numpy())
+            all_q90.append(q90.cpu().numpy())
+            all_targets.append(tgt.numpy())
 
-    preds_h   = np.concatenate(all_preds_h,   axis=0)
-    targets_h = np.concatenate(all_targets_h, axis=0)
+    q10_h     = np.concatenate(all_q10,    axis=0)
+    q50_h     = np.concatenate(all_q50,    axis=0)
+    q90_h     = np.concatenate(all_q90,    axis=0)
+    targets_h = np.concatenate(all_targets, axis=0)
 
-    # -----------------------------
-    # Rescale to raw MWh
-    # -----------------------------
+    # ── Rescale to raw MWh ─────────────────────────────────────────────────────
     if "demand_mean" in dataset and "demand_std" in dataset:
         demand_mean = float(dataset["demand_mean"])
         demand_std  = float(dataset["demand_std"])
     else:
-        all_targets = target_data.detach().cpu().numpy()
-        demand_mean = float(all_targets.mean())
-        demand_std  = float(all_targets.std())
+        all_t = target_data.detach().cpu().numpy()
+        demand_mean = float(all_t.mean())
+        demand_std  = float(all_t.std())
 
-    preds_h   = preds_h   * demand_std + demand_mean
+    q10_h     = q10_h     * demand_std + demand_mean
+    q50_h     = q50_h     * demand_std + demand_mean
+    q90_h     = q90_h     * demand_std + demand_mean
     targets_h = targets_h * demand_std + demand_mean
 
-    test_start_global_idx = train_size + val_size
+    # u_alpha was fitted on normalised data — rescale to MWh
+    u_alpha_mwh = u_alpha * demand_std
 
-    # -----------------------------
-    # Call each plot function
-    # -----------------------------
+    test_start_global_idx = test_start  # used for date labels
 
-    plot_forecast_windows(preds_h, targets_h, test_start_global_idx, test_plot_path)
+    # ── Plots ──────────────────────────────────────────────────────────────────
+    plot_forecast_windows(q10_h, q50_h, q90_h, targets_h,
+                          test_start_global_idx, test_plot_path)
     if logger:
         logger.success("Saved: forecast windows plot")
 
-    plot_actual_vs_predicted(preds_h, targets_h, encoder_data, train_size, val_size,
+    plot_actual_vs_predicted(q50_h, targets_h, encoder_data,
+                             train_size, val_size, cal_size,
                              demand_mean, demand_std, scatter_plot_path)
     if logger:
         logger.success("Saved: actual vs predicted scatter plot")
 
-    plot_residual_diagnostics(preds_h, targets_h, test_start_global_idx, residuals_plot_path)
+    plot_residual_diagnostics(q50_h, targets_h, test_start_global_idx, residuals_plot_path)
     if logger:
         logger.success("Saved: residual diagnostics plot")
 
-    plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_size,
+    plot_per_horizon_metrics(q50_h, targets_h, encoder_data,
+                             train_size, val_size, cal_size,
                              demand_mean, demand_std, horizon_plot_path)
     if logger:
         logger.success("Saved: per-horizon metrics plot")
 
-    # -----------------------------
-    # Generate README
-    # -----------------------------
-    generate_evaluation_readme(plot_dir, best_epoch, checkpoint['val_loss'], preds_h.shape[0],
-                               train_size, val_size, test_size, n_total,
-                               model_filename=os.path.basename(model_path))
+    plot_quantile_coverage(q10_h, q90_h, targets_h, u_alpha_mwh, coverage_plot_path)
+    if logger:
+        logger.success("Saved: quantile coverage plot (raw + calibrated)")
+
+    plot_pinball_loss(q10_h, q50_h, q90_h, targets_h, pinball_plot_path)
+    if logger:
+        logger.success("Saved: pinball loss plot")
+
+    # ── README ─────────────────────────────────────────────────────────────────
+    generate_evaluation_readme(
+        plot_dir, best_epoch, checkpoint['val_loss'], q50_h.shape[0],
+        train_size, val_size, test_size, n_total,
+        model_filename=os.path.basename(model_path)
+    )

@@ -124,8 +124,9 @@ class LSTMForecast(nn.Module):
         #
         #   ŷ_t = W · h_t + b     where W ∈ ℝ^{output_size × hidden_size}
         
-        self.fc_mu      = nn.Linear(config.hidden_size, 1)  # trained in stage 1
-        self.fc_log_var = nn.Linear(config.hidden_size, 1)  # trained in stage 2
+        self.fc_q10 = nn.Linear(config.hidden_size, 1)
+        self.fc_q50 = nn.Linear(config.hidden_size, 1)
+        self.fc_q90 = nn.Linear(config.hidden_size, 1)
 
         self._init_weights()
 
@@ -148,11 +149,11 @@ class LSTMForecast(nn.Module):
                 param.data[n // 4 : n // 2].fill_(1.0)  # forget gate bias
 
             # Output projection weights
-            elif 'fc_mu.weight' in name or 'fc_log_var.weight' in name:
+            elif any(x in name for x in ['fc_q10.weight', 'fc_q50.weight', 'fc_q90.weight']):
                 nn.init.xavier_uniform_(param.data)
 
             # Output projection biases
-            elif 'fc_mu.bias' in name or 'fc_log_var.bias' in name:
+            elif any(x in name for x in ['fc_q10.bias', 'fc_q50.bias', 'fc_q90.bias']):
                 nn.init.constant_(param.data, 0)
 
     def forward(self, encoder_input, decoder_input):
@@ -164,10 +165,10 @@ class LSTMForecast(nn.Module):
         decoder_output, _ = self.decoder_lstm(decoder_input, (hidden, cell))
         decoder_output = self.dropout(decoder_output)
 
-        mu      = self.fc_mu(decoder_output).squeeze(-1)
-        log_var = self.fc_log_var(decoder_output).squeeze(-1)
-        log_var = torch.clamp(log_var, min=-10, max=5)
+        q10 = self.fc_q10(decoder_output).squeeze(-1)
+        q50 = self.fc_q50(decoder_output).squeeze(-1)
+        q90 = self.fc_q90(decoder_output).squeeze(-1)
 
-        return mu, log_var
+        return q10, q50, q90
     
 Config.load_from_file()
