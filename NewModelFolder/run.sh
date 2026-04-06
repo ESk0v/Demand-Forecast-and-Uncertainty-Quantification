@@ -6,7 +6,7 @@
 #SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=15
 #SBATCH --mem=24G
-#SBATCH --gres=gpu:1            # request 1 GPU
+#SBATCH --gres=gpu:4            # request 4 GPU
 #SBATCH --partition=l4          # correct GPU partition
 
 # ==========================================
