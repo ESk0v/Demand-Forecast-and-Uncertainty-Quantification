@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, Subset
+from scipy.ndimage import uniform_filter1d
 import numpy as np
 import os
 import sys
@@ -131,46 +132,42 @@ def collect_predictions(model, loader, device):
     )
 
 
-def conformal_calibration(q10, q50, q90, targets, alpha=0.1):
+def conformal_calibration(q10, q50, q90, targets, alpha=0.1, smooth_window=5):
     """
-    Split-conformal calibration for quantile intervals.
-
-    Nonconformity score: how much does the [q10, q90] interval need to
-    *expand* to just cover the target?  Positive = target was outside,
-    negative = target was already inside.
-
-        s_i = max(q10_i - y_i,   # target below lower bound
-                  y_i  - q90_i)  # target above upper bound
-
-    The (1-alpha) empirical quantile of these scores is the scalar
-    expansion u_alpha we add symmetrically to every future interval:
-
-        q10_cal = q10 - u_alpha
-        q90_cal = q90 + u_alpha
-
-    This guarantees marginal coverage >= (1-alpha) on exchangeable data.
+    Split-conformal calibration for quantile intervals (per-horizon / Option B).
 
     Args:
-        q10, q50, q90 : np.ndarray  — model outputs on the calibration set
-        targets       : np.ndarray  — ground-truth values
-        alpha         : float       — miscoverage rate (default 0.1 → 90 % coverage)
+        q10, q50, q90 : np.ndarray of shape (N, horizon) — model outputs on the calibration set
+        targets       : np.ndarray of shape (N, horizon) — ground-truth values
+        alpha         : float, miscoverage rate (default 0.1 → 90% coverage)
+        smooth_window : int, optional, smoothing window for u_alpha_t to reduce noise
 
     Returns:
-        q10_cal, q90_cal : calibrated bounds for the calibration set
-        u_alpha          : scalar expansion; save this and apply at test time
+        q10_cal, q90_cal   : np.ndarray, calibrated bounds
+        u_alpha_t_smooth   : np.ndarray, per-horizon expansion (length = horizon)
     """
-    scores  = np.maximum(q10 - targets, targets - q90)  # shape: same as targets
-    u_alpha = float(np.quantile(scores, 1.0 - alpha))
+    q10 = np.minimum(q10, q50)
+    q90 = np.maximum(q90, q50)
 
-    q10_cal = q10 - u_alpha
-    q90_cal = q90 + u_alpha
+    scores = np.maximum(q10 - targets, targets - q90)  # shape (N, horizon)
+
+    u_alpha_t = np.quantile(scores, 1.0 - alpha, axis=0)  # shape (horizon,)
+
+    if smooth_window > 1:
+        u_alpha_t_smooth = uniform_filter1d(u_alpha_t, size=smooth_window)
+    else:
+        u_alpha_t_smooth = u_alpha_t
+
+    q10_cal = q10 - u_alpha_t_smooth[np.newaxis, :]
+    q90_cal = q90 + u_alpha_t_smooth[np.newaxis, :]
 
     empirical_coverage = float(np.mean((targets >= q10_cal) & (targets <= q90_cal)))
-    print(f"Conformal u_alpha={u_alpha:.4f}  |  "
-          f"empirical coverage on cal set: {empirical_coverage:.3f}  "
+
+    print(f"Conformal Option B: per-horizon u_alpha_t (smoothed) applied")
+    print(f"Empirical coverage on cal set: {empirical_coverage:.3f} "
           f"(target >= {1-alpha:.2f})")
 
-    return q10_cal, q90_cal, u_alpha
+    return q10_cal, q90_cal, u_alpha_t_smooth
 
 
 def save_checkpoint(model, optimizer, config, epoch, val_loss,
@@ -284,10 +281,10 @@ def train_model(config, train_loader, val_loader, cal_loader,
     q10_cal, q50_cal, q90_cal, tgt_cal = collect_predictions(
         model, cal_loader, config.device
     )
-    _, _, u_alpha = conformal_calibration(
+    _, _, u_alpha_t = conformal_calibration(
         q10_cal, q50_cal, q90_cal, tgt_cal, alpha=conformal_alpha
     )
-    checkpoint['conformal_u_alpha'] = u_alpha
+    checkpoint['conformal_u_alpha'] = u_alpha_t  # shape: (forecast_length,)
     checkpoint['conformal_alpha']   = conformal_alpha
 
     torch.save(checkpoint, model_save_path)
@@ -296,7 +293,7 @@ def train_model(config, train_loader, val_loader, cal_loader,
         logger.success(
             f"Training complete. Best checkpoint: epoch {checkpoint['epoch']}  "
             f"val_loss={checkpoint['val_loss']:.4f}  "
-            f"conformal_u_alpha={u_alpha:.4f}"
+            f"conformal_u_alpha shape={u_alpha_t.shape}"
         )
 
     # ── Loss curve plot ────────────────────────────────────────────────────────
@@ -312,22 +309,46 @@ def train_model(config, train_loader, val_loader, cal_loader,
     return best_val_loss, train_losses, val_losses
 
 
-# ── Inference helper ───────────────────────────────────────────────────────────
-
 def apply_conformal(q10, q90, u_alpha):
     """
-    Apply a pre-computed conformal expansion scalar to new predictions.
+    Apply conformal calibration to new predictions.
 
-    Load u_alpha from your checkpoint:
-        u_alpha = checkpoint['conformal_u_alpha']
+    Supports:
+      - scalar u_alpha → same expansion for all horizons (legacy)
+      - vector u_alpha (per-horizon) → one expansion per forecast step (Option B)
 
-    Then call:
-        q10_cal, q90_cal = apply_conformal(q10_raw, q90_raw, u_alpha)
+    Args:
+        q10 : np.ndarray or torch.Tensor of shape (N, horizon) — lower bound predictions
+        q90 : np.ndarray or torch.Tensor of shape (N, horizon) — upper bound predictions
+        u_alpha : float or np.ndarray of shape (horizon,) — conformal expansion
+
+    Returns:
+        q10_cal, q90_cal : calibrated bounds, same type as inputs
     """
-    return q10 - u_alpha, q90 + u_alpha
 
+    # Convert to numpy if torch.Tensor
+    is_tensor = False
+    if isinstance(q10, torch.Tensor):
+        is_tensor = True
+        q10 = q10.detach().cpu().numpy()
+        q90 = q90.detach().cpu().numpy()
 
-# ── Loss ───────────────────────────────────────────────────────────────────────
+    # Apply per-horizon or scalar
+    if np.isscalar(u_alpha):
+        q10_cal = q10 - u_alpha
+        q90_cal = q90 + u_alpha
+    else:
+        # u_alpha must be 1D array of length = forecast horizon
+        q10_cal = q10 - u_alpha[np.newaxis, :]
+        q90_cal = q90 + u_alpha[np.newaxis, :]
+
+    # Convert back to torch.Tensor if needed
+    if is_tensor:
+        q10_cal = torch.from_numpy(q10_cal).to(q10.device)
+        q90_cal = torch.from_numpy(q90_cal).to(q90.device)
+
+    return q10_cal, q90_cal
+
 
 def quantile_loss(pred, target, q):
     error = target - pred

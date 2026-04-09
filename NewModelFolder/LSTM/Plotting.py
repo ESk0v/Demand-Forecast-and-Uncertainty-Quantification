@@ -80,7 +80,10 @@ def _get_split_indices(n_total, val_ratio=0.1, cal_ratio=0.05, test_ratio=0.1):
 # Plot functions
 # ─────────────────────────────────────────────────────────────────────────────
 
-def plot_forecast_windows(q10, q50, q90, targets_h, test_start_global_idx, save_path):
+def plot_forecast_windows(q10, q50, q90, targets_h, test_start_global_idx, save_path, u_alpha=None):
+    """
+    Plot example forecast windows (raw median + intervals), optionally with per-horizon conformal calibration.
+    """
     n_test_samples = q50.shape[0]
     n_panels       = min(n_test_samples, 3)
     sample_indices = np.linspace(0, n_test_samples - 1, n_panels, dtype=int)
@@ -95,7 +98,16 @@ def plot_forecast_windows(q10, q50, q90, targets_h, test_start_global_idx, save_
         window_mae = np.mean(np.abs(targets_h[idx] - q50[idx]))
         ax.plot(hours, targets_h[idx], label='Actual', linewidth=1.5, color='blue')
         ax.plot(hours, q50[idx], label='Median (q50)', linewidth=1.5, color='red', alpha=0.8)
-        ax.fill_between(hours, q10[idx], q90[idx], color='red', alpha=0.2, label='q10-q90 interval')
+
+        # Raw interval
+        ax.fill_between(hours, q10[idx], q90[idx], color='red', alpha=0.2, label='Raw q10-q90 interval')
+
+        # Per-horizon calibrated interval
+        if u_alpha is not None:
+            q10_cal = q10[idx] - u_alpha
+            q90_cal = q90[idx] + u_alpha
+            ax.fill_between(hours, q10_cal, q90_cal, color='green', alpha=0.2, label='Per-horizon calibrated interval')
+
         ax.set_title(f"{label}\n(MAE: {window_mae:.4f})", fontsize=9)
         ax.set_xlabel("Forecast Hour", fontsize=9)
         ax.set_ylabel("abvaerk (MWh)", fontsize=9)
@@ -273,21 +285,24 @@ def plot_per_horizon_metrics(preds_h, targets_h, encoder_data, train_size, val_s
 def plot_quantile_coverage(q10_h, q90_h, targets_h, u_alpha, save_path):
     """
     Coverage per horizon for raw q10-q90 and conformal-calibrated intervals.
-    Both are shown on the same axes so the effect of calibration is visible.
+    Accepts per-horizon u_alpha (length 168) for fine-grained calibration.
     """
     hours = range(1, 169)
 
     # Raw interval coverage
     raw_coverage = ((targets_h >= q10_h) & (targets_h <= q90_h)).mean(axis=0) * 100
 
-    # Calibrated interval coverage
+    # Calibrated interval coverage (per-horizon)
+    u_alpha = np.array(u_alpha).reshape(1, -1)  # shape (1, horizons)
+
     q10_cal = q10_h - u_alpha
     q90_cal = q90_h + u_alpha
     cal_coverage = ((targets_h >= q10_cal) & (targets_h <= q90_cal)).mean(axis=0) * 100
 
     fig, ax = plt.subplots(figsize=(14, 5))
     ax.plot(hours, raw_coverage, color='steelblue', linewidth=1.5, label='Raw q10-q90 coverage')
-    ax.plot(hours, cal_coverage, color='green',     linewidth=1.5, label=f'Calibrated coverage (u_alpha={u_alpha:.4f})')
+    ax.plot(hours, cal_coverage, color='green', linewidth=1.5,
+            label=f'Per-horizon calibrated coverage')
     ax.axhline(80, color='black',  linestyle='--', linewidth=1.0, label='Nominal 80% (raw interval target)')
     ax.axhline(90, color='orange', linestyle='--', linewidth=1.0, label='Nominal 90% (calibrated target)')
     ax.set_xlabel("Forecast Horizon (hours)", fontsize=12)
@@ -356,13 +371,24 @@ def main(filePaths=None, logger=None, run_dir=None):
     # ── Load checkpoint ────────────────────────────────────────────────────────
     checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
     best_epoch = checkpoint['epoch']
-    u_alpha    = float(checkpoint.get('conformal_u_alpha', 0.0))
-    if logger:
-        logger.info(
-            f"Checkpoint loaded — best epoch: {best_epoch}  "
-            f"val_loss: {checkpoint['val_loss']:.4f}  "
-            f"conformal_u_alpha: {u_alpha:.4f}"
-        )
+
+    # Load per-horizon conformal expansion (vector)
+    u_alpha_t = checkpoint.get('conformal_u_alpha', None)
+
+    if u_alpha_t is None:
+        print("No per-horizon u_alpha found — using scalar fallback")
+        u_alpha_t = 0.0
+    else:
+        # Convert to numpy if it's a tensor or list
+        if isinstance(u_alpha_t, torch.Tensor):
+            u_alpha_t = u_alpha_t.cpu().numpy()
+        elif isinstance(u_alpha_t, list):
+            u_alpha_t = np.array(u_alpha_t)
+
+        if np.isscalar(u_alpha_t):
+            print("u_alpha is scalar:", u_alpha_t)
+        else:
+            print("u_alpha vector length:", len(u_alpha_t))
 
     # ── Load dataset ───────────────────────────────────────────────────────────
     dataset      = torch.load(dataset_path, weights_only=False)
@@ -421,8 +447,11 @@ def main(filePaths=None, logger=None, run_dir=None):
     q90_h     = q90_h     * demand_std + demand_mean
     targets_h = targets_h * demand_std + demand_mean
 
-    # u_alpha was fitted on normalised data — rescale to MWh
-    u_alpha_mwh = u_alpha * demand_std
+    # ── Rescale per-horizon conformal expansion to raw units
+    if np.isscalar(u_alpha_t):
+        u_alpha_mwh = u_alpha_t * demand_std
+    else:
+        u_alpha_mwh = u_alpha_t * demand_std  # shape: (horizon,)
 
     test_start_global_idx = test_start  # used for date labels
 

@@ -102,10 +102,6 @@ class LSTMForecast(nn.Module):
         # It then autoregressively produces outputs one timestep at a time:
         #
         #   ŷ_t, (h_t, c_t) = LSTM_cell(d_t, h_{t-1}, c_{t-1})
-        #
-        # where d_t is either:
-        #   → "Teacher forcing" mode (training): the ground-truth target from
-        #     the previous step is fed as the next input. Speeds up convergence.
         self.decoder_lstm = nn.LSTM(
             input_size=config.decoder_features,
             hidden_size=config.hidden_size,
@@ -172,3 +168,9 @@ class LSTMForecast(nn.Module):
         return q10, q50, q90
     
 Config.load_from_file()
+
+
+
+
+#Tign at læse op på
+#   * monotonic quantile parameterization
