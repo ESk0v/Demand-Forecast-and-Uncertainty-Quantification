@@ -37,8 +37,8 @@ def main(local=False, filePaths=None, logger=None):
     # -----------------------------
     # Train/val/test split boundary
     # -----------------------------
-    val_ratio  = 0.1
-    test_ratio = 0.1
+    val_ratio  = 0.15
+    test_ratio = 0.15
 
     n_total_windows = len(df) - encoder_history - forecast_length
     test_size  = int(n_total_windows * test_ratio)

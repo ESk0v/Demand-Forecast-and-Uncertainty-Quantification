@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from LSTMModel import LSTMForecast
 
 
-def load_and_split_dataset(dataset_path, val_ratio=0.1, cal_ratio=0.05, test_ratio=0.1):
+def load_and_split_dataset(dataset_path, val_ratio=0.1, cal_ratio=0.1, test_ratio=0.1):
     """
     Chronological 4-way split — no data leakage.
 
@@ -133,25 +133,13 @@ def collect_predictions(model, loader, device):
 
 
 def conformal_calibration(q10, q50, q90, targets, alpha=0.1, smooth_window=5):
-    """
-    Split-conformal calibration for quantile intervals (per-horizon / Option B).
-
-    Args:
-        q10, q50, q90 : np.ndarray of shape (N, horizon) — model outputs on the calibration set
-        targets       : np.ndarray of shape (N, horizon) — ground-truth values
-        alpha         : float, miscoverage rate (default 0.1 → 90% coverage)
-        smooth_window : int, optional, smoothing window for u_alpha_t to reduce noise
-
-    Returns:
-        q10_cal, q90_cal   : np.ndarray, calibrated bounds
-        u_alpha_t_smooth   : np.ndarray, per-horizon expansion (length = horizon)
-    """
     q10 = np.minimum(q10, q50)
     q90 = np.maximum(q90, q50)
 
-    scores = np.maximum(q10 - targets, targets - q90)  # shape (N, horizon)
+    # Use absolute deviations from interval
+    scores = np.maximum(targets - q10, q90 - targets)  # always >= 0
 
-    u_alpha_t = np.quantile(scores, 1.0 - alpha, axis=0)  # shape (horizon,)
+    u_alpha_t = np.quantile(scores, 1.0 - alpha, axis=0)
 
     if smooth_window > 1:
         u_alpha_t_smooth = uniform_filter1d(u_alpha_t, size=smooth_window)
@@ -162,10 +150,7 @@ def conformal_calibration(q10, q50, q90, targets, alpha=0.1, smooth_window=5):
     q90_cal = q90 + u_alpha_t_smooth[np.newaxis, :]
 
     empirical_coverage = float(np.mean((targets >= q10_cal) & (targets <= q90_cal)))
-
-    print(f"Conformal Option B: per-horizon u_alpha_t (smoothed) applied")
-    print(f"Empirical coverage on cal set: {empirical_coverage:.3f} "
-          f"(target >= {1-alpha:.2f})")
+    print(f"Empirical coverage on cal set: {empirical_coverage:.3f} (target >= {1-alpha:.2f})")
 
     return q10_cal, q90_cal, u_alpha_t_smooth
 

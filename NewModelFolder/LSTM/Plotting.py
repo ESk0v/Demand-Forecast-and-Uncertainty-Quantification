@@ -64,7 +64,7 @@ def _date_label_for(idx, test_start_global_idx):
             f"→ {window_end.strftime('%Y-%m-%d %H:%M')}"), window_start
 
 
-def _get_split_indices(n_total, val_ratio=0.1, cal_ratio=0.05, test_ratio=0.1):
+def _get_split_indices(n_total, val_ratio=0.1, cal_ratio=0.1, test_ratio=0.1):
     """
     Reproduce the exact same 4-way chronological split used in LSTMTraining.py.
     Returns (train_size, val_size, cal_size, test_size).
@@ -83,19 +83,26 @@ def _get_split_indices(n_total, val_ratio=0.1, cal_ratio=0.05, test_ratio=0.1):
 def plot_forecast_windows(q10, q50, q90, targets_h, test_start_global_idx, save_path, u_alpha=None):
     """
     Plot example forecast windows (raw median + intervals), optionally with per-horizon conformal calibration.
+    Plots all examples stacked vertically for more width per plot.
+    Prints the total width for each horizon after calibration (sanity check).
     """
+    import numpy as np
+    import matplotlib.pyplot as plt
+
     n_test_samples = q50.shape[0]
-    n_panels       = min(n_test_samples, 3)
+    n_panels = min(n_test_samples, 3)  # plot up to 3 samples
     sample_indices = np.linspace(0, n_test_samples - 1, n_panels, dtype=int)
-    hours          = np.arange(1, 169)
+    hours = np.arange(1, 169)
 
-    fig, axes = plt.subplots(1, n_panels, figsize=(max(8, 22 // 3 * n_panels), 6),
-                             squeeze=False)
-    axes = axes[0]
+    # Create vertical stacked subplots
+    fig, axes = plt.subplots(n_panels, 1, figsize=(14, 5 * n_panels), squeeze=False)
+    axes = axes[:, 0]  # flatten
 
-    for ax, idx in zip(axes, sample_indices):
+    for ax_idx, (ax, idx) in enumerate(zip(axes, sample_indices)):
         label, _ = _date_label_for(idx, test_start_global_idx)
         window_mae = np.mean(np.abs(targets_h[idx] - q50[idx]))
+
+        # Plot actual and median
         ax.plot(hours, targets_h[idx], label='Actual', linewidth=1.5, color='blue')
         ax.plot(hours, q50[idx], label='Median (q50)', linewidth=1.5, color='red', alpha=0.8)
 
@@ -104,18 +111,34 @@ def plot_forecast_windows(q10, q50, q90, targets_h, test_start_global_idx, save_
 
         # Per-horizon calibrated interval
         if u_alpha is not None:
+            u_alpha = np.array(u_alpha).flatten()  # ensure 1D
             q10_cal = q10[idx] - u_alpha
             q90_cal = q90[idx] + u_alpha
-            ax.fill_between(hours, q10_cal, q90_cal, color='green', alpha=0.2, label='Per-horizon calibrated interval')
 
-        ax.set_title(f"{label}\n(MAE: {window_mae:.4f})", fontsize=9)
-        ax.set_xlabel("Forecast Hour", fontsize=9)
-        ax.set_ylabel("abvaerk (MWh)", fontsize=9)
+            ax.fill_between(hours, q10_cal, q90_cal, color='green', alpha=0.2,
+                            label='Per-horizon calibrated interval')
+
+            # Calibrated interval width line for clarity
+            interval_width = q90_cal - q10_cal
+            ax.plot(hours, interval_width, color='black', linestyle=':', linewidth=1.2,
+                    label='Calibrated interval width')
+
+            # Sanity check print (only for first sample)
+            if ax_idx == 0:
+                total_width = (q90[idx] - q10[idx]) + 2 * u_alpha
+                print("\n--- Sanity Check: Raw width, alpha, total width ---")
+                print("Hour | Raw Width | Alpha | Total Width")
+                for h, (rw, a, tw) in enumerate(zip(q90[idx] - q10[idx], u_alpha, total_width), start=1):
+                    print(f"{h:3d} | {rw:.4f} | {a:.4f} | {tw:.4f}")
+
+        ax.set_title(f"{label}\n(MAE: {window_mae:.4f})", fontsize=10)
+        ax.set_xlabel("Forecast Hour", fontsize=10)
+        ax.set_ylabel("abvaerk (MWh)", fontsize=10)
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
 
     fig.suptitle("Example 168-Hour Forecast Windows (Test Set)", fontsize=14, fontweight='bold')
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
     plt.savefig(save_path, dpi=150)
     plt.close()
 
@@ -389,6 +412,8 @@ def main(filePaths=None, logger=None, run_dir=None):
             print("u_alpha is scalar:", u_alpha_t)
         else:
             print("u_alpha vector length:", len(u_alpha_t))
+            for value in u_alpha_t:
+                print(value)
 
     # ── Load dataset ───────────────────────────────────────────────────────────
     dataset      = torch.load(dataset_path, weights_only=False)
@@ -457,7 +482,7 @@ def main(filePaths=None, logger=None, run_dir=None):
 
     # ── Plots ──────────────────────────────────────────────────────────────────
     plot_forecast_windows(q10_h, q50_h, q90_h, targets_h,
-                          test_start_global_idx, test_plot_path)
+                          test_start_global_idx, test_plot_path,u_alpha=u_alpha_t)
     if logger:
         logger.success("Saved: forecast windows plot")
 

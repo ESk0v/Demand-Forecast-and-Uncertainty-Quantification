@@ -62,21 +62,21 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
     logger.success("LSTM training completed successfully!")
     logger.info("Generating training README...")
 
-    generate_training_readme(
-        plot_dir       = run_dir,
-        model_filename = os.path.basename(model_save_path),
-        config         = config,
-        train_size     = train_size,
-        val_size       = val_size,
-        cal_size       = cal_size,
-        test_size      = test_size,
-        n_total        = n_total,
-        epochs_run     = len(train_losses),
-        best_epoch     = checkpoint['epoch'],
-        best_val_loss  = checkpoint['val_loss'],
-        conformal_u_alpha = checkpoint['conformal_u_alpha'],
-        early_stopped  = (len(train_losses) < config.epochs),
-        patience       = patience
-    )
+    #generate_training_readme(
+    #    plot_dir       = run_dir,
+    #    model_filename = os.path.basename(model_save_path),
+    #    config         = config,
+    #    train_size     = train_size,
+    #    val_size       = val_size,
+    #    cal_size       = cal_size,
+    #    test_size      = test_size,
+    #    n_total        = n_total,
+    #    epochs_run     = len(train_losses),
+    #    best_epoch     = checkpoint['epoch'],
+    #    best_val_loss  = checkpoint['val_loss'],
+    #    conformal_u_alpha = checkpoint['conformal_u_alpha'],
+    #    early_stopped  = (len(train_losses) < config.epochs),
+    #    patience       = patience
+    #)
 
     logger.success("Training README successfully generated")
