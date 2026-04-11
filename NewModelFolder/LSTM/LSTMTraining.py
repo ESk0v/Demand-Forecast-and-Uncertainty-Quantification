@@ -137,7 +137,8 @@ def conformal_calibration(q10, q50, q90, targets, alpha=0.1, smooth_window=5):
     q90 = np.maximum(q90, q50)
 
     # Use absolute deviations from interval
-    scores = np.maximum(targets - q10, q90 - targets)  # always >= 0
+    scores = np.maximum(q10 - targets, targets - q90)
+    scores = np.maximum(scores, 0)
 
     u_alpha_t = np.quantile(scores, 1.0 - alpha, axis=0)
 
@@ -315,6 +316,7 @@ def apply_conformal(q10, q90, u_alpha):
     is_tensor = False
     if isinstance(q10, torch.Tensor):
         is_tensor = True
+        device = q10.device          # ← save before converting
         q10 = q10.detach().cpu().numpy()
         q90 = q90.detach().cpu().numpy()
 

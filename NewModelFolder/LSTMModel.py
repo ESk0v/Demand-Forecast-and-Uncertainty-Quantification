@@ -14,12 +14,12 @@ class Config:
     forecast_length = 168
     encoder_features = 8
     decoder_features = 12
-    hidden_size = 256
-    num_layers = 1
+    hidden_size = 512
+    num_layers = 2
     dropout = 0.3
     context_dropout = 0.1
     epochs = 1
-    batch_size = 64
+    batch_size = 128
     learning_rate = 1e-5
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_size = 1
