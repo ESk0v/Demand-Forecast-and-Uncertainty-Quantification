@@ -24,6 +24,8 @@ def main(local=False, filePaths=None, logger=None):
         if col in df.columns:
             df[col] = df[col].interpolate(method='linear').bfill().ffill()
 
+    df = add_forecast_uncertainty_noise(df, forecast_length=forecast_length, max_noise_pct=0.80)
+
     # -----------------------------
     # Build forecast column lists
     # -----------------------------
@@ -268,3 +270,35 @@ def main(local=False, filePaths=None, logger=None):
     )
 
     return output_path
+
+def add_forecast_uncertainty_noise(df, forecast_length=168, max_noise_pct=0.20):
+    """
+    Adds structured, horizon-growing noise to forecast columns only.
+    
+    At step i (0-indexed):
+      - amplitude = (i / (forecast_length - 1)) * max_noise_pct
+      - noise     = random uniform in [-amplitude, +amplitude]
+    
+    Each variable (temp, humidity, wind, precip, cloud) gets
+    independent noise draws — applied to raw values before normalisation.
+    """
+    df = df.copy()
+
+    forecast_vars = {
+        'temperature':     [f"temperature_{i}"     for i in range(forecast_length)],
+        'relativeHumidity':[f"relativeHumidity_{i}" for i in range(forecast_length)],
+        'windSpeed':       [f"windSpeed_{i}"        for i in range(forecast_length)],
+        'precipitation':   [f"precipitation_{i}"    for i in range(forecast_length)],
+        'cloudCover':      [f"cloudCover_{i}"       for i in range(forecast_length)],
+    }
+
+    for var_name, cols in forecast_vars.items():
+        for i, col in enumerate(cols):
+            if col not in df.columns:
+                continue
+
+            amplitude = (i / (forecast_length - 1)) * max_noise_pct
+            noise = np.random.uniform(-amplitude, amplitude, size=len(df))
+            df[col] = df[col] * (1.0 + noise)
+
+    return df

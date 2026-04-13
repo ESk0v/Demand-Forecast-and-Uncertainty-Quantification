@@ -209,7 +209,7 @@ def conformal_calibration(q10, q50, q90, targets, alpha=0.1):
 
     # Ramp alpha down → greedier at late horizons
     # 0.35 endpoint targets ~93-94% coverage at hour 168
-    alpha_per_horizon = np.linspace(alpha, alpha * 0.35, n_horizons)
+    alpha_per_horizon = np.linspace(alpha, alpha, n_horizons)
 
     u_alpha_t = np.array([
         np.quantile(scores[:, t], 1.0 - alpha_per_horizon[t])
