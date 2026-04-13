@@ -32,21 +32,19 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
     num_workers = min(4, os.cpu_count())
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    def make_loader(dataset, shuffle):
+    def make_loader(dataset, shuffle, batch_size):
         return DataLoader(
             dataset,
-            batch_size=config.batch_size,
+            batch_size=batch_size,
             shuffle=shuffle,
             pin_memory=(device == 'cuda'),
             num_workers=num_workers,
             persistent_workers=False,
         )
 
-    train_loader = make_loader(train_dataset, shuffle=True)
-    val_loader   = make_loader(val_dataset,   shuffle=False)
-    cal_loader   = make_loader(cal_dataset,   shuffle=False)
-    # test_loader is not passed to train_model — reserved for evaluation
-    test_loader  = make_loader(test_dataset,  shuffle=False)  # noqa: F841
+    train_loader = make_loader(train_dataset, shuffle=True,  batch_size=config.batch_size)
+    val_loader   = make_loader(val_dataset,   shuffle=False, batch_size=config.batch_size * 8)
+    cal_loader   = make_loader(cal_dataset,   shuffle=False, batch_size=config.batch_size * 8)
 
     if device == "cuda":
         torch.cuda.empty_cache()

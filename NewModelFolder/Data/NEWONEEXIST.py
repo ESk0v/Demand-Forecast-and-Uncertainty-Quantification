@@ -37,7 +37,7 @@ def main(local=False, filePaths=None, logger=None):
     # -----------------------------
     # Train/val/test split boundary
     # -----------------------------
-    val_ratio  = 0.25
+    val_ratio  = 0.15
     test_ratio = 0.15
 
     n_total_windows = len(df) - encoder_history - forecast_length
@@ -142,54 +142,28 @@ def main(local=False, filePaths=None, logger=None):
     df = get_time_features(df)
 
     # -----------------------------
-    # Demand lag features — computed AFTER normalisation
-    # so they are on the same scale as abvaerk.
-    # bfill() handles the first rows where shift produces NaN.
-    # -----------------------------
-    df = df.copy()
-    df['lag_1h']   = df['abvaerk'].shift(1).bfill()
-    df['lag_24h']  = df['abvaerk'].shift(24).bfill()
-    df['lag_168h'] = df['abvaerk'].shift(168).bfill()
-
-    # -----------------------------
-    # Horizon index — same for every window
-    # 0.0 at hour 1, 1.0 at hour 168
-    # Gives the decoder an explicit "how far into the future am I" signal
+    # Horizon index — normalised 0.0 to 1.0 across forecast steps
+    # Gives the decoder an explicit "how far into the future am I" signal,
+    # which helps the model learn that uncertainty should grow with horizon.
     # -----------------------------
     horizon_index = np.linspace(0.0, 1.0, forecast_length, dtype=np.float32).reshape(-1, 1)
+    # shape: (168, 1) — same for every window, broadcast below
 
     # -----------------------------
-    # Feature lists
-    #
-    # Encoder (11 features):
-    #   abvaerk, toutdoor, hour_sin, hour_cos,
-    #   weekday_sin, weekday_cos, month_sin, month_cos,
-    #   lag_1h, lag_24h, lag_168h
-    #
-    # Decoder (15 features):
-    #   6  time features (hour/weekday/month sin+cos)
-    #   5  weather forecast (temp, humidity, wind, precip, cloud)
-    #   1  last known demand (constant across horizon)
-    #   1  horizon index (0.0 → 1.0)
-    #   1  lag_24h  (demand yesterday same hour, constant across horizon)
-    #   1  lag_168h (demand last week same hour, constant across horizon)
+    # Build tensors
     # -----------------------------
-    encoder_features = [
-        'abvaerk',
-        'toutdoor',
-        'hour_sin', 'hour_cos',
-        'weekday_sin', 'weekday_cos',
-        'month_sin', 'month_cos',
-        'lag_1h',    # demand 1 hour ago
-        'lag_24h',   # demand yesterday same hour
-        'lag_168h',  # demand last week same hour
-    ]
+    encoder_features      = ['abvaerk', 'toutdoor', 'hour_sin', 'hour_cos',
+                              'weekday_sin', 'weekday_cos', 'month_sin', 'month_cos']
+    decoder_time_features = ['hour_sin', 'hour_cos',
+                              'weekday_sin', 'weekday_cos', 'month_sin', 'month_cos']
 
-    decoder_time_features = [
-        'hour_sin', 'hour_cos',
-        'weekday_sin', 'weekday_cos',
-        'month_sin', 'month_cos',
-    ]
+    # Decoder features breakdown (15 total):
+    #   6  — time features (hour/weekday/month sin+cos)
+    #   5  — weather forecast (temp, humidity, wind, precip, cloud)
+    #   1  — last known demand (demand at enc_end - 1, repeated constant)
+    #   1  — horizon index (0.0 at hour 1 → 1.0 at hour 168)
+    #   1  — lag_24h  (demand 24 hours before forecast start — yesterday same hour)
+    #   1  — lag_168h (demand 168 hours before forecast start — last week same hour)
 
     encoder_data = []
     decoder_data = []
@@ -203,46 +177,43 @@ def main(local=False, filePaths=None, logger=None):
         dec_end   = enc_end + forecast_length
 
         # ── Encoder: historical window ─────────────────────────────────────────
-        # Shape: (168, 11)
         encoder_slice = df.iloc[enc_start:enc_end][encoder_features].values.astype(np.float32)
 
         # ── Decoder time features: future timestamps ───────────────────────────
-        # Shape: (168, 6)
         decoder_time_slice = df.iloc[enc_end:dec_end][decoder_time_features].values.astype(np.float32)
 
         # ── Decoder weather forecast ───────────────────────────────────────────
-        # Shape: (168, 5)
         forecast_row = df.iloc[enc_end]
         decoder_forecast_slice = np.zeros((forecast_length, 5), dtype=np.float32)
         for j, cols in enumerate(forecast_cols_all):
             decoder_forecast_slice[:, j] = forecast_row[cols].values[:forecast_length]
 
-        # ── Last known demand — repeated constant ──────────────────────────────
-        # The demand value at the final encoder timestep.
-        # Shape: (168, 1)
+        # ── Last known demand — already normalised ─────────────────────────────
+        # The demand value at the final encoder timestep (enc_end - 1).
+        # Repeated as a constant so the decoder knows the current demand level.
         last_demand     = float(df.iloc[enc_end - 1]['abvaerk'])
         last_demand_col = np.full((forecast_length, 1), last_demand, dtype=np.float32)
 
-        # ── Lag features for decoder — repeated constants ──────────────────────
-        # lag_24h:  demand at same clock hour yesterday relative to forecast start
-        # lag_168h: demand at same clock hour last week relative to forecast start
-        # Using max(0, ...) guards against very early windows in the dataset.
-        # Shape: (168, 1) each
+        # ── Lag features — already normalised (same scale as abvaerk) ──────────
+        # lag_24h:  demand at the same clock hour yesterday
+        #           guards against enc_end < 24 (shouldn't happen with history=168)
         lag_24h  = float(df.iloc[max(0, enc_end - 24)]['abvaerk'])
-        lag_168h = float(df.iloc[max(0, enc_end - 168)]['abvaerk'])
         lag_24h_col  = np.full((forecast_length, 1), lag_24h,  dtype=np.float32)
+
+        # lag_168h: demand at the same clock hour last week
+        #           guards against very early windows in the dataset
+        lag_168h = float(df.iloc[max(0, enc_end - 168)]['abvaerk'])
         lag_168h_col = np.full((forecast_length, 1), lag_168h, dtype=np.float32)
 
         # ── Assemble decoder input ─────────────────────────────────────────────
-        # Shape: (168, 15)
         decoder_slice = np.concatenate([
-            decoder_time_slice,      # (168, 6)  future time features
-            decoder_forecast_slice,  # (168, 5)  weather forecast
-            last_demand_col,         # (168, 1)  last known demand
-            horizon_index,           # (168, 1)  how far into the future
-            lag_24h_col,             # (168, 1)  demand yesterday same hour
-            lag_168h_col,            # (168, 1)  demand last week same hour
-        ], axis=1)
+            decoder_time_slice,      # (168, 6)  — future time features
+            decoder_forecast_slice,  # (168, 5)  — weather forecast
+            last_demand_col,         # (168, 1)  — last known demand
+            horizon_index,           # (168, 1)  — how far into the future
+            lag_24h_col,             # (168, 1)  — demand yesterday same hour
+            lag_168h_col,            # (168, 1)  — demand last week same hour
+        ], axis=1)                   # → (168, 15)
 
         # ── Target: future demand ──────────────────────────────────────────────
         target_slice = df.iloc[enc_end:dec_end]['abvaerk'].values.astype(np.float32)

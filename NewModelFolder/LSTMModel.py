@@ -12,15 +12,15 @@ class Config:
     # Default hyperparameters
     encoder_history = 168
     forecast_length = 168
-    encoder_features = 8
-    decoder_features = 12
-    hidden_size = 512
+    encoder_features = 11
+    decoder_features = 15
+    hidden_size = 768
     num_layers = 2
-    dropout = 0.3
+    dropout = 0.2
     context_dropout = 0.1
     epochs = 1
-    batch_size = 128
-    learning_rate = 1e-5
+    batch_size = 64
+    learning_rate = 1e-4
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_size = 1
 
