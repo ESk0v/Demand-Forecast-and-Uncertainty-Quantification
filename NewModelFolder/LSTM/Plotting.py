@@ -64,7 +64,7 @@ def _date_label_for(idx, test_start_global_idx):
             f"→ {window_end.strftime('%Y-%m-%d %H:%M')}"), window_start
 
 
-def _get_split_indices(n_total, val_ratio=0.1, cal_ratio=0.1, test_ratio=0.1):
+def _get_split_indices(n_total, val_ratio=0.20, cal_ratio=0.1, test_ratio=0.1):
     """
     Reproduce the exact same 4-way chronological split used in LSTMTraining.py.
     Returns (train_size, val_size, cal_size, test_size).

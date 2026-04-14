@@ -9,12 +9,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from LSTMModel import LSTMForecast
 
 
-def load_and_split_dataset(dataset_path, val_ratio=0.15, cal_ratio=0.10, test_ratio=0.15):
+def load_and_split_dataset(dataset_path, val_ratio=0.20, cal_ratio=0.10, test_ratio=0.10):
     """
     Chronological 4-way split — no data leakage.
 
-    Default proportions:  train=60%  val=15%  cal=10%  test=15%
-
+    Default proportions:  train=60%  val=20%  cal=10%  test=10%
     val  → early stopping / model selection only
     cal  → conformal calibration (never seen during training)
     test → final held-out evaluation
@@ -182,48 +181,44 @@ def collect_predictions(model, loader, device):
 
 
 def conformal_calibration(q10, q50, q90, targets, alpha=0.1):
-    """
-    Per-horizon conformal calibration with monotone accumulation.
 
-    Score function:
-        s(t) = max(q10_t - y_t, y_t - q90_t, 0)
-        Zero when y is inside [q10, q90], positive otherwise.
-
-    Alpha ramp:
-        Decreases from alpha at hour 1 to alpha*0.35 at hour 168.
-        Lower alpha → higher quantile level → wider correction.
-        Greedier at late horizons where the model is less accurate.
-        alpha*0.35 targets ~93-94% at late horizons (was 0.2 → 97-98%,
-        too conservative and wasted sharpness).
-
-    Monotone accumulate:
-        Band can only grow with horizon — never shrinks due to noise.
-    """
+    # 1. Fix crossing quantiles (ensure valid ordering)
     q10 = np.minimum(q10, q50)
     q90 = np.maximum(q90, q50)
 
-    scores = np.maximum(q10 - targets, targets - q90)
-    scores = np.maximum(scores, 0)  # shape: (N, 168)
+    # 2. Compute "miss distance" outside the prediction interval
+    #    0 if inside [q10, q90], otherwise distance to nearest bound
+    scores = np.maximum(
+        np.maximum(q10 - targets, targets - q90),
+        0
+    )
 
+    # 3. Number of forecast steps (horizons, e.g. 168 hours)
     n_horizons = scores.shape[1]
 
-    # Ramp alpha down → greedier at late horizons
-    # 0.35 endpoint targets ~93-94% coverage at hour 168
+    # 4. Same alpha for all horizons (no actual ramp here)
     alpha_per_horizon = np.linspace(alpha, alpha, n_horizons)
 
+    # 5. Compute calibration threshold per horizon
+    #    This finds the (1 - alpha) quantile of error distribution
     u_alpha_t = np.array([
         np.quantile(scores[:, t], 1.0 - alpha_per_horizon[t])
         for t in range(n_horizons)
     ])
 
-    # Monotone — band can only grow, never shrink
-    u_alpha_t = np.maximum.accumulate(u_alpha_t)
-
+    # 6. Expand intervals symmetrically using calibration offsets
     q10_cal = q10 - u_alpha_t[np.newaxis, :]
     q90_cal = q90 + u_alpha_t[np.newaxis, :]
 
-    empirical_coverage = float(np.mean((targets >= q10_cal) & (targets <= q90_cal)))
-    print(f"Empirical coverage on cal set: {empirical_coverage:.3f} (target >= {1-alpha:.2f})")
+    # 7. Compute empirical coverage of calibrated intervals
+    empirical_coverage = float(
+        np.mean((targets >= q10_cal) & (targets <= q90_cal))
+    )
+
+    print(
+        f"Empirical coverage on cal set: {empirical_coverage:.3f} "
+        f"(target ≈ {1 - alpha:.2f})"
+    )
 
     return q10_cal, q90_cal, u_alpha_t
 
@@ -422,6 +417,5 @@ def apply_conformal(q10, q90, u_alpha):
 
 
 def quantile_loss(pred, target, q):
-    """Pinball / quantile loss. Standard formulation."""
     error = target - pred
     return torch.mean(torch.max(q * error, (q - 1) * error))

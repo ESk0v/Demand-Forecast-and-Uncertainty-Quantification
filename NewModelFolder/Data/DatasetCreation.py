@@ -1,3 +1,4 @@
+from fastapi import logger
 import pandas as pd
 import numpy as np
 import torch
@@ -24,7 +25,12 @@ def main(local=False, filePaths=None, logger=None):
         if col in df.columns:
             df[col] = df[col].interpolate(method='linear').bfill().ffill()
 
-    df = add_forecast_uncertainty_noise(df, forecast_length=forecast_length, max_noise_pct=0.80)
+    df = add_forecast_uncertainty_noise(
+        df,
+        forecast_length=forecast_length,
+        max_noise_pct=0.80,
+        logger=logger
+    )
 
     # -----------------------------
     # Build forecast column lists
@@ -271,7 +277,7 @@ def main(local=False, filePaths=None, logger=None):
 
     return output_path
 
-def add_forecast_uncertainty_noise(df, forecast_length=168, max_noise_pct=0.20):
+def add_forecast_uncertainty_noise(df, forecast_length=168, max_noise_pct=0.80, logger=None):
     """
     Adds structured, horizon-growing noise to forecast columns only.
     
@@ -298,6 +304,10 @@ def add_forecast_uncertainty_noise(df, forecast_length=168, max_noise_pct=0.20):
                 continue
 
             amplitude = (i / (forecast_length - 1)) * max_noise_pct
+
+            if i in [0, forecast_length // 2, forecast_length - 1]:
+                logger.info(f"{col}: amplitude={amplitude:.3f}")
+    
             noise = np.random.uniform(-amplitude, amplitude, size=len(df))
             df[col] = df[col] * (1.0 + noise)
 
