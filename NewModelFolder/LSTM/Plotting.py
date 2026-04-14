@@ -142,7 +142,6 @@ def plot_forecast_windows(q10, q50, q90, targets_h, test_start_global_idx, save_
     plt.savefig(save_path, dpi=150)
     plt.close()
 
-
 def plot_actual_vs_predicted(preds_h, targets_h, encoder_data, train_size, val_size, cal_size,
                              demand_mean, demand_std, save_path):
     rng = np.random.default_rng(42)

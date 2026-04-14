@@ -63,6 +63,7 @@ def main(local=False, filePaths=None, logger=None):
     # =====================================================
     # Normalisation (fit on train only)
     # =====================================================
+
     demand_mean = df.iloc[:train_end]['abvaerk'].mean()
     demand_std  = df.iloc[:train_end]['abvaerk'].std()
     df['abvaerk'] = (df['abvaerk'] - demand_mean) / demand_std
@@ -137,10 +138,10 @@ def main(local=False, filePaths=None, logger=None):
     decoder_data = []
     target_data  = []
 
-    logger.info("Building samples (NO NOISE)...")
+    logger.info("Building samples with PER-SAMPLE noise...")
 
     # =====================================================
-    # BUILD DATASET
+    # BUILD DATASET (KEY CHANGE HERE)
     # =====================================================
     for i in tqdm(range(n_total_windows), disable=True):
 
@@ -148,25 +149,41 @@ def main(local=False, filePaths=None, logger=None):
         enc_end   = i + encoder_history
         dec_end   = enc_end + forecast_length
 
-        # Encoder
+        # ---------------------------
+        # Encoder (clean)
+        # ---------------------------
         encoder_slice = df.iloc[enc_start:enc_end][encoder_features].values.astype(np.float32)
 
+        # ---------------------------
         # Decoder time features
+        # ---------------------------
         decoder_time_slice = df.iloc[enc_end:dec_end][decoder_time_features].values.astype(np.float32)
 
-        # =================================================
-        # Forecast features (CLEAN - NO NOISE)
-        # =================================================
+        # ---------------------------
+        # Forecast WITH PER-SAMPLE NOISE
+        # ---------------------------
         forecast_row = df.iloc[enc_end]
 
         decoder_forecast_slice = np.zeros((forecast_length, 5), dtype=np.float32)
 
         for j, cols in enumerate(forecast_cols_all):
-            base_series = forecast_row[cols].values[:forecast_length].astype(np.float32)
-            decoder_forecast_slice[:, j] = base_series
 
-        # Static decoder features (unchanged)
+            base_series = forecast_row[cols].values[:forecast_length].astype(np.float32)
+
+            noise = np.zeros(forecast_length, dtype=np.float32)
+
+            for t in range(forecast_length):
+                amplitude = (t / (forecast_length - 1)) * 0.08
+                noise[t] = np.random.uniform(-amplitude, amplitude)
+
+            noisy_series = base_series * (1.0 + noise)
+            decoder_forecast_slice[:, j] = noisy_series
+
+        # ---------------------------
+        # Static decoder features
+        # ---------------------------
         last_demand = float(df.iloc[enc_end - 1]['abvaerk'])
+        last_demand_col = np.full((forecast_length, 1), last_demand, dtype=np.float32)
 
         lag_24h  = float(df.iloc[max(0, enc_end - 24)]['abvaerk'])
         lag_168h = float(df.iloc[max(0, enc_end - 168)]['abvaerk'])
@@ -174,14 +191,21 @@ def main(local=False, filePaths=None, logger=None):
         lag_24h_col  = np.full((forecast_length, 1), lag_24h, dtype=np.float32)
         lag_168h_col = np.full((forecast_length, 1), lag_168h, dtype=np.float32)
 
+        # ---------------------------
         # Decoder assembly
+        # ---------------------------
         decoder_slice = np.concatenate([
             decoder_time_slice,
             decoder_forecast_slice,
-            horizon_index
+            last_demand_col,
+            horizon_index,
+            lag_24h_col,
+            lag_168h_col
         ], axis=1)
 
+        # ---------------------------
         # Target
+        # ---------------------------
         target_slice = df.iloc[enc_end:dec_end]['abvaerk'].values.astype(np.float32)
 
         encoder_data.append(encoder_slice)

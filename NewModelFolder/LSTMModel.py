@@ -13,7 +13,7 @@ class Config:
     encoder_history = 168
     forecast_length = 168
     encoder_features = 11
-    decoder_features = 15
+    decoder_features = 12
     hidden_size = 768
     num_layers = 2
     dropout = 0.2
@@ -153,7 +153,10 @@ class LSTMForecast(nn.Module):
                 nn.init.constant_(param.data, 0)
 
     def forward(self, encoder_input, decoder_input):
-        _, (hidden, cell) = self.encoder_lstm(encoder_input)
+        encoder_output, (hidden, cell) = self.encoder_lstm(encoder_input)
+
+        recent = encoder_output[:, -24:, :].mean(dim=1)  # last 24 hours average
+        hidden = hidden + 0.15 * recent.unsqueeze(0)
 
         hidden = self.context_dropout(hidden)
         cell   = self.context_dropout(cell)
