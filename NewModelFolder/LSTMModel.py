@@ -12,7 +12,7 @@ class Config:
     # Default hyperparameters
     encoder_history = 168
     forecast_length = 168
-    encoder_features = 11
+    encoder_features = 8
     decoder_features = 12
     hidden_size = 768
     num_layers = 2
@@ -153,10 +153,7 @@ class LSTMForecast(nn.Module):
                 nn.init.constant_(param.data, 0)
 
     def forward(self, encoder_input, decoder_input):
-        encoder_output, (hidden, cell) = self.encoder_lstm(encoder_input)
-
-        recent = encoder_output[:, -24:, :].mean(dim=1)  # last 24 hours average
-        hidden = hidden + 0.15 * recent.unsqueeze(0)
+        _, (hidden, cell) = self.encoder_lstm(encoder_input)
 
         hidden = self.context_dropout(hidden)
         cell   = self.context_dropout(cell)
@@ -171,9 +168,3 @@ class LSTMForecast(nn.Module):
         return q10, q50, q90
     
 Config.load_from_file()
-
-
-
-
-#Tign at læse op på
-#   * monotonic quantile parameterization

@@ -123,8 +123,7 @@ def main(local=False, filePaths=None, logger=None):
         'abvaerk', 'toutdoor',
         'hour_sin', 'hour_cos',
         'weekday_sin', 'weekday_cos',
-        'month_sin', 'month_cos',
-        'lag_1h', 'lag_24h', 'lag_168h'
+        'month_sin', 'month_cos'
     ]
 
     decoder_time_features = [
