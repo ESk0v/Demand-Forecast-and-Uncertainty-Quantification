@@ -364,7 +364,7 @@ def main(filePaths=None, logger=None):
         decoder_slice = np.concatenate([
             decoder_time_slice,      # (168, 6)
             decoder_forecast_slice,  # (168, 5)
-        ], axis=1)                   # → (168, 11)
+        ], axis=1)                   # → (168, 12)
 
         # Target: future demand
         target_slice = df.iloc[enc_end:dec_end]['abvaerk'].values.astype(np.float32)
