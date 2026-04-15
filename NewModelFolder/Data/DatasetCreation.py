@@ -27,8 +27,7 @@ def _interpolate_abvaerk_knn(df, k=4, temp_range_std=2.0):
     missing_indices = np.where(missing_mask)[0]
 
     # Temperature stats
-    temp_mean = df['toutdoor'].mean()
-    temp_std  = df['toutdoor'].std() if df['toutdoor'].std() > 1e-8 else 1.0
+    temp_std = df['toutdoor'].std() if df['toutdoor'].std() > 1e-8 else 1.0
 
     for missing_idx in missing_indices:
         current_date = df.iloc[missing_idx]['dateTime']
@@ -49,10 +48,10 @@ def _interpolate_abvaerk_knn(df, k=4, temp_range_std=2.0):
             (df['dateTime'].dt.month.isin(month_range))  # Same season
         )
 
-        # Temperature similarity filter (±temp_range_std std devs)
+        # Temperature similarity filter around current temperature (±temp_range_std std devs)
         if not pd.isna(current_temp):
-            temp_min = temp_mean - temp_range_std * temp_std
-            temp_max = temp_mean + temp_range_std * temp_std
+            temp_min = current_temp - temp_range_std * temp_std
+            temp_max = current_temp + temp_range_std * temp_std
             past_mask = past_mask & (df['toutdoor'] >= temp_min) & (df['toutdoor'] <= temp_max)
 
         # Fallback 1: If no same-weekday match, try same hour + season only
