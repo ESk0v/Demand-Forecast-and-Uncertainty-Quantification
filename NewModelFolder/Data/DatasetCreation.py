@@ -141,13 +141,13 @@ def _compute_local_trend(df, missing_idx, valid_mask):
     after_idx = None
 
     # Find last valid point before
-    for i in range(missing_idx - 1, max(-1, missing_idx - 24), -1):
+    for i in range(missing_idx - 1, max(-1, missing_idx - 25), -1):
         if i >= 0 and valid_mask.iloc[i]:
             before_idx = i
             break
 
     # Find first valid point after
-    for i in range(missing_idx + 1, min(len(df), missing_idx + 24)):
+    for i in range(missing_idx + 1, min(len(df), missing_idx + 25)):
         if valid_mask.iloc[i]:
             after_idx = i
             break
