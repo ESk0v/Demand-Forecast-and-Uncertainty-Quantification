@@ -33,7 +33,7 @@ def _interpolate_abvaerk_knn(df, k=4, temp_range_std=2.0):
     for missing_idx in missing_indices:
         current_date = df.iloc[missing_idx]['dateTime']
         current_hour = current_date.hour
-        current_weekday = current_date.weekday
+        current_weekday = current_date.weekday()
         current_month = current_date.month
         current_temp = df.iloc[missing_idx]['toutdoor']
 
