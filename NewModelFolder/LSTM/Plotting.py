@@ -142,6 +142,7 @@ def plot_forecast_windows(q10, q50, q90, targets_h, test_start_global_idx, save_
     plt.savefig(save_path, dpi=150)
     plt.close()
 
+
 def plot_actual_vs_predicted(preds_h, targets_h, encoder_data, train_size, val_size, cal_size,
                              demand_mean, demand_std, save_path):
     rng = np.random.default_rng(42)
@@ -365,6 +366,77 @@ def plot_pinball_loss(q10_h, q50_h, q90_h, targets_h, save_path):
     plt.close()
 
 
+def plot_lstm_weather_impact(q10, q50, q90,
+                            q10_zero, q50_zero, q90_zero,
+                            targets_h,
+                            test_start_global_idx, save_path,
+                            u_alpha=None, idx=0):
+    hours = np.arange(1, 169)
+
+    # Label + metrics
+    label, _ = _date_label_for(idx, test_start_global_idx)
+
+    mae_normal = np.mean(np.abs(targets_h[idx] - q50[idx]))
+    mae_zero   = np.mean(np.abs(targets_h[idx] - q50_zero[idx]))
+
+    # 🔹 Create stacked plots
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+
+    # ─────────────────────────────
+    # TOP: Normal
+    # ─────────────────────────────
+    ax = axes[0]
+
+    ax.plot(hours, targets_h[idx], label='Actual', linewidth=2)
+    ax.plot(hours, q50[idx], label='LSTM Median (q50)', linewidth=2)
+
+    ax.fill_between(hours, q10[idx], q90[idx],
+                    alpha=0.2, label='Raw q10–q90 interval')
+
+    if u_alpha is not None:
+        u_alpha = np.array(u_alpha).flatten()
+        q10_cal = q10[idx] - u_alpha
+        q90_cal = q90[idx] + u_alpha
+
+        ax.fill_between(hours, q10_cal, q90_cal,
+                        alpha=0.2, label='Calibrated interval')
+
+    ax.set_title(f"LSTM Forecast (With Weather)\n{label} (MAE: {mae_normal:.4f})")
+    ax.set_ylabel("abvaerk (MWh)")
+    ax.legend()
+    ax.grid(alpha=0.3)
+
+    # ─────────────────────────────
+    # BOTTOM: Weather removed
+    # ─────────────────────────────
+    ax = axes[1]
+
+    ax.plot(hours, targets_h[idx], label='Actual', linewidth=2)
+    ax.plot(hours, q50_zero[idx], label='LSTM Median (weather = 0)', linewidth=2)
+
+    ax.fill_between(hours, q10_zero[idx], q90_zero[idx],
+                    alpha=0.2, label='Raw q10–q90 interval')
+
+    if u_alpha is not None:
+        q10_cal_zero = q10_zero[idx] - u_alpha
+        q90_cal_zero = q90_zero[idx] + u_alpha
+
+        ax.fill_between(hours, q10_cal_zero, q90_cal_zero,
+                        alpha=0.2, label='Calibrated interval')
+
+    ax.set_title(f"LSTM Forecast (Weather Removed)\n(MAE: {mae_zero:.4f})")
+    ax.set_xlabel("Forecast Hour")
+    ax.set_ylabel("abvaerk (MWh)")
+    ax.legend()
+    ax.grid(alpha=0.3)
+
+    # ─────────────────────────────
+    fig.suptitle("Weather Impact on 168-Hour Forecast", fontsize=14)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main orchestrator
 # ─────────────────────────────────────────────────────────────────────────────
@@ -484,6 +556,72 @@ def main(filePaths=None, logger=None, run_dir=None):
                           test_start_global_idx, test_plot_path,u_alpha=u_alpha_t)
     if logger:
         logger.success("Saved: forecast windows plot")
+
+    all_q10_zero, all_q50_zero, all_q90_zero = [], [], []
+
+    with torch.no_grad():
+
+        # =========================================================
+        # USE SAME SAMPLE AS PLOTTING (idx = 0)
+        # =========================================================
+        idx = 0
+
+        enc, dec, tgt = test_dataset[idx]
+
+        enc = enc.unsqueeze(0).to(config.device)
+        dec = dec.unsqueeze(0).to(config.device)
+        tgt = tgt.unsqueeze(0).to(config.device)
+
+        # =========================================================
+        # ORIGINAL decoder (same one used everywhere else)
+        # =========================================================
+        dec_full = dec
+
+        print("\nBEFORE (same sample used in plot):")
+        print(tuple(dec_full[0, 0, :11].detach().cpu().numpy()))
+
+        # =========================================================
+        # ZERO WEATHER VERSION
+        # =========================================================
+        dec_zero = dec.clone()
+        dec_zero[:, :, 6:11] = 0
+
+        print("\nAFTER (weather removed, same sample):")
+        print(tuple(dec_zero[0, 0, :11].detach().cpu().numpy()))
+
+        # =========================================================
+        # PREDICT ON SAME SAMPLE
+        # =========================================================
+        q10_z, q50_z, q90_z = model(enc, dec_zero)
+
+        all_q10_zero.append(q10_z.cpu().numpy())
+        all_q50_zero.append(q50_z.cpu().numpy())
+        all_q90_zero.append(q90_z.cpu().numpy())
+
+    # reshape (single sample)
+    q10_zero_h = np.concatenate(all_q10_zero, axis=0)
+    q50_zero_h = np.concatenate(all_q50_zero, axis=0)
+    q90_zero_h = np.concatenate(all_q90_zero, axis=0)
+
+    # rescale
+    q10_zero_h = q10_zero_h * demand_std + demand_mean
+    q50_zero_h = q50_zero_h * demand_std + demand_mean
+    q90_zero_h = q90_zero_h * demand_std + demand_mean
+
+    # Plot
+    weather_plot_path = os.path.join(plot_dir, "weather_impact.png")
+
+    plot_lstm_weather_impact(
+        q10_h, q50_h, q90_h,
+        q10_zero_h, q50_zero_h, q90_zero_h,
+        targets_h,
+        test_start_global_idx,
+        weather_plot_path,
+        u_alpha=u_alpha_t
+    )
+
+    if logger:
+        logger.success("Saved: weather impact plot")
 
     plot_actual_vs_predicted(q50_h, targets_h, encoder_data,
                              train_size, val_size, cal_size,
