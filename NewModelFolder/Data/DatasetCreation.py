@@ -27,7 +27,8 @@ def _interpolate_abvaerk_knn(df, k=4, temp_range_std=2.0):
     missing_indices = np.where(missing_mask)[0]
 
     # Temperature stats
-    temp_std = df['toutdoor'].std() if df['toutdoor'].std() > 1e-8 else 1.0
+    temp_std_raw = df['toutdoor'].std()
+    temp_std = temp_std_raw if temp_std_raw > 1e-8 else 1.0
 
     for missing_idx in missing_indices:
         current_date = df.iloc[missing_idx]['dateTime']
