@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import torch
 from tqdm import tqdm
-from sklearn.neighbors import NearestNeighbors
 
 
 def _interpolate_abvaerk_knn(df, k=4, temp_range_std=2.0):
