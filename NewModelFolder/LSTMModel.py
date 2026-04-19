@@ -14,8 +14,8 @@ class Config:
     forecast_length = 168
     encoder_features = 8
     decoder_features = 12
-    hidden_size = 768
-    num_layers = 2
+    hidden_size = 512
+    num_layers = 1
     dropout = 0.2
     context_dropout = 0.1
     epochs = 1
@@ -38,10 +38,8 @@ class Config:
                 else:
                     print(f"Warning: unknown config key '{key}' in JSON, skipping")
 
-    
     @classmethod
     def print_config(cls, logger=None):
-        # Print all class attributes that are hyperparameters
         logger.info(f"Current config:\n"
         f"                                                             \033[1mbatch size      :\033[0m\033[37m {cls.batch_size}\n"
         f"                                                             \033[1mdecoder features:\033[0m\033[37m {cls.decoder_features}\n"
@@ -110,19 +108,40 @@ class LSTMForecast(nn.Module):
             dropout=config.dropout if config.num_layers > 1 else 0.0
         )
 
-        self.dropout = nn.Dropout(config.dropout)  # ← add this line here
-        self.context_dropout = nn.Dropout(config.context_dropout)  # ← add this line here
+        # ====== SPREAD LSTM =======
+        # Decoder-only sub-network — never sees the encoder hidden state.
+        # Its uncertainty MUST emerge from the decoder inputs alone
+        # (weather forecasts, time features, horizon index), so spread
+        # naturally grows as the horizon index increases.
+        #
+        # CHANGE 4: Instead of starting from pure zeros, we seed this LSTM
+        # with a projection of the encoder cell state so it has regime
+        # awareness (hot week vs cold week, weekday vs weekend pattern).
+        # The cell state — not hidden state — is used because it carries
+        # slower, more structural memory rather than the last-step signal.
+        self.spread_lstm = nn.LSTM(
+            input_size=config.decoder_features,
+            hidden_size=config.hidden_size // 2,
+            num_layers=1,
+            batch_first=True,
+            dropout=0.0
+        )
+
+        # CHANGE 4: Projects encoder cell state (hidden_size) down to
+        # spread LSTM hidden size (hidden_size // 2) to seed h0.
+        # tanh keeps the initial hidden state in a reasonable range.
+        self.spread_init_proj = nn.Linear(config.hidden_size, config.hidden_size // 2)
+
+        self.dropout         = nn.Dropout(config.dropout)
+        self.context_dropout = nn.Dropout(config.context_dropout)
 
         # ─── OUTPUT PROJECTION ──────────────────────────────────────────────────
-        # Projects the decoder's hidden state at each timestep from hidden_size
-        # dimensions down to output_size (e.g. 1 for univariate point forecast,
-        # or N for multi-target / quantile forecasting).
-        #
-        #   ŷ_t = W · h_t + b     where W ∈ ℝ^{output_size × hidden_size}
-        
-        self.fc_q10 = nn.Linear(config.hidden_size, 1)
-        self.fc_q50 = nn.Linear(config.hidden_size, 1)
-        self.fc_q90 = nn.Linear(config.hidden_size, 1)
+        # q50 comes from the shared decoder (encoder-informed → accurate median)
+        # q10/q90 are offsets from q50 produced by the spread network only,
+        # ensuring interval width is a pure function of decoder state.
+        self.fc_q50       = nn.Linear(config.hidden_size,     1)
+        self.fc_spread_lo = nn.Linear(config.hidden_size // 2, 1)  # q50 - spread_lo = q10
+        self.fc_spread_hi = nn.Linear(config.hidden_size // 2, 1)  # q50 + spread_hi = q90
 
         self._init_weights()
 
@@ -139,32 +158,67 @@ class LSTMForecast(nn.Module):
                 nn.init.orthogonal_(param.data)
 
             # LSTM biases — zeros with forget gate set to 1.0
-            elif 'bias' in name and 'fc' not in name:
+            elif 'bias' in name and 'fc' not in name and 'proj' not in name:
                 nn.init.constant_(param.data, 0)
                 n = param.size(0)
                 param.data[n // 4 : n // 2].fill_(1.0)  # forget gate bias
 
             # Output projection weights
-            elif any(x in name for x in ['fc_q10.weight', 'fc_q50.weight', 'fc_q90.weight']):
+            elif any(x in name for x in ['fc_q50.weight', 'fc_spread_lo.weight', 'fc_spread_hi.weight']):
                 nn.init.xavier_uniform_(param.data)
 
             # Output projection biases
-            elif any(x in name for x in ['fc_q10.bias', 'fc_q50.bias', 'fc_q90.bias']):
+            elif any(x in name for x in ['fc_q50.bias', 'fc_spread_lo.bias', 'fc_spread_hi.bias']):
+                nn.init.constant_(param.data, 0)
+
+            # Spread init projection
+            elif 'spread_init_proj.weight' in name:
+                nn.init.xavier_uniform_(param.data)
+
+            elif 'spread_init_proj.bias' in name:
                 nn.init.constant_(param.data, 0)
 
     def forward(self, encoder_input, decoder_input):
-        _, (hidden, cell) = self.encoder_lstm(encoder_input)
 
+        # ── Encoder ──────────────────────────────────────────────────────────
+        _, (hidden, cell) = self.encoder_lstm(encoder_input)
         hidden = self.context_dropout(hidden)
         cell   = self.context_dropout(cell)
 
+        # ── Shared decoder (encoder-seeded → accurate q50) ───────────────────
         decoder_output, _ = self.decoder_lstm(decoder_input, (hidden, cell))
-        decoder_output = self.dropout(decoder_output)
+        decoder_output     = self.dropout(decoder_output)
+        q50                = self.fc_q50(decoder_output).squeeze(-1)
 
-        q10 = self.fc_q10(decoder_output).squeeze(-1)
-        q50 = self.fc_q50(decoder_output).squeeze(-1)
-        q90 = self.fc_q90(decoder_output).squeeze(-1)
+        # ── Spread network ────────────────────────────────────────────────────
+        # CHANGE 4: Seed h0 with a projection of the encoder cell state
+        # (last layer only: cell[-1] shape = [batch, hidden_size]).
+        # This gives the spread network regime awareness without anchoring
+        # it to a fixed spread width — c0 is zeros so memory starts fresh.
+        spread_h0 = torch.tanh(
+            self.spread_init_proj(cell[-1])     # [batch, hidden_size // 2]
+        ).unsqueeze(0)                          # [1, batch, hidden_size // 2]
+        spread_c0 = torch.zeros_like(spread_h0)
+
+        spread_output, _ = self.spread_lstm(decoder_input, (spread_h0, spread_c0))
+        spread_output     = self.dropout(spread_output)
+
+        spread_lo = nn.functional.softplus(self.fc_spread_lo(spread_output).squeeze(-1))
+        spread_hi = nn.functional.softplus(self.fc_spread_hi(spread_output).squeeze(-1))
+
+        # CHANGE 1: Multiplicative horizon ramp — forces spread to grow over time.
+        # Starts at 0.2 (20% of learned spread at hour 0) and reaches 1.0 at
+        # hour 168. This structurally prevents the large early-horizon spread
+        # (which caused 100% coverage at hour 0) and forces the LSTM to learn
+        # the shape of growth rather than the absolute level.
+        horizon_steps = decoder_input.shape[1]   # 168
+        ramp = torch.linspace(0.2, 1.0, horizon_steps, device=decoder_input.device)
+        ramp = ramp.unsqueeze(0)                 # [1, 168] — broadcasts over batch
+
+        q10 = q50 - spread_lo * ramp
+        q90 = q50 + spread_hi * ramp
 
         return q10, q50, q90
-    
+
+
 Config.load_from_file()

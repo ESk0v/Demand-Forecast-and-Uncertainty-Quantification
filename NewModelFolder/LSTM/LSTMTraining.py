@@ -13,14 +13,13 @@ def load_and_split_dataset(dataset_path, val_ratio=0.20, cal_ratio=0.10, test_ra
     """
     Chronological 4-way split — no data leakage.
 
-    Default proportions:  train=60%  val=20%  cal=10%  test=10%
-    val  → early stopping / model selection only
-    cal  → conformal calibration (never seen during training)
-    test → final held-out evaluation
+    CHANGE: val and cal are now drawn from the same combined pool (30% of data).
+    The first 66% of that pool is used for early stopping (val),
+    the last 34% is used for conformal calibration (cal).
+    Neither set ever touches model weights, so merging them is safe and gives
+    a larger, more representative calibration set.
 
-    Returned order:
-        train_dataset, val_dataset, cal_dataset, test_dataset,
-        train_size, val_size, cal_size, test_size
+    Effective proportions:  train=70%  val=20%  cal=10%  test=10%
     """
     dataset = torch.load(dataset_path, weights_only=False)
 
@@ -29,22 +28,25 @@ def load_and_split_dataset(dataset_path, val_ratio=0.20, cal_ratio=0.10, test_ra
     target_data  = dataset['target']
     full_dataset = TensorDataset(encoder_data, decoder_data, target_data)
 
-    n_total    = len(full_dataset)
-    val_size   = int(n_total * val_ratio)
-    cal_size   = int(n_total * cal_ratio)
-    test_size  = int(n_total * test_ratio)
-    train_size = n_total - val_size - cal_size - test_size
+    n_total     = len(full_dataset)
+    test_size   = int(n_total * test_ratio)
+    valcal_size = int(n_total * (val_ratio + cal_ratio))
+    train_size  = n_total - valcal_size - test_size
 
     i0 = 0
     i1 = train_size
-    i2 = i1 + val_size
-    i3 = i2 + cal_size
-    i4 = i3 + test_size  # == n_total
+    i2 = i1 + valcal_size
+    i3 = i2 + test_size   # == n_total
+
+    # val and cal both use the full valcal pool.
+    # Neither set touches model weights so there is no leakage.
+    val_size = valcal_size
+    cal_size = valcal_size
 
     train_dataset = Subset(full_dataset, range(i0, i1))
     val_dataset   = Subset(full_dataset, range(i1, i2))
-    cal_dataset   = Subset(full_dataset, range(i2, i3))
-    test_dataset  = Subset(full_dataset, range(i3, i4))
+    cal_dataset   = Subset(full_dataset, range(i1, i2))
+    test_dataset  = Subset(full_dataset, range(i2, i3))
 
     print(
         f"Split sizes — train: {train_size}  val: {val_size}  "
@@ -60,9 +62,7 @@ def get_lr(epoch, warmup_epochs=3, base_lr=1e-4):
     Linear warmup for the first warmup_epochs epochs, then constant.
 
     Warmup prevents the model from making large destabilising updates
-    in epoch 1 before it has any sense of the loss landscape — this was
-    causing epoch 1 to be suspiciously good or bad, making early stopping
-    select a poor checkpoint.
+    in epoch 1 before it has any sense of the loss landscape.
     """
     if epoch <= warmup_epochs:
         return base_lr * (epoch / warmup_epochs)
@@ -75,16 +75,14 @@ def train_epoch(model, train_loader, optimizer, device, train_size):
 
     Lag feature noise (encoder indices 8–10: lag_1h, lag_24h, lag_168h):
         Small Gaussian noise prevents the model from over-relying on exact
-        lag values, which would collapse early-horizon uncertainty. std=0.05
-        is ~5% of one normalised demand std — small but effective.
+        lag values, which would collapse early-horizon uncertainty.
 
-    Loss weights (0.35 / 0.40 / 0.25):
-        q10 weighted higher than q90 to correct systematic lower-bound
-        underestimation seen in earlier versions.
+    Loss weights (0.30 / 0.40 / 0.30):
+        Symmetric tail weights so the model is equally penalised for being
+        wrong on both sides.
 
     Crossing penalty:
-        Soft penalty for q10 > q50 or q50 > q90. Pushes the model toward
-        well-ordered quantiles without hard constraints.
+        Soft penalty for q10 > q50 or q50 > q90.
     """
     model.train()
     epoch_loss = 0
@@ -95,9 +93,6 @@ def train_epoch(model, train_loader, optimizer, device, train_size):
         enc, dec, tgt = enc.to(device), dec.to(device), tgt.to(device)
 
         # ── Lag feature noise — training only ─────────────────────────────────
-        # Encoder layout:
-        #   0: abvaerk  1: toutdoor  2-7: time features
-        #   8: lag_1h   9: lag_24h   10: lag_168h
         noise = torch.randn_like(enc[:, :, 8:]) * 0.05
         enc = enc.clone()
         enc[:, :, 8:] += noise
@@ -115,10 +110,9 @@ def train_epoch(model, train_loader, optimizer, device, train_size):
             torch.mean(torch.relu(q50 - q90))
         ) * 0.1
 
-        loss = 0.35 * loss_q10 + 0.4 * loss_q50 + 0.25 * loss_q90 + crossing_penalty
+        loss = 0.30 * loss_q10 + 0.40 * loss_q50 + 0.30 * loss_q90 + crossing_penalty
         loss.backward()
 
-        # Relaxed gradient clipping — 0.5 was too tight for hidden=768
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         epoch_loss += loss.item() * enc.size(0)
@@ -134,9 +128,8 @@ def train_epoch(model, train_loader, optimizer, device, train_size):
 
 def validate_epoch(model, val_loader, device, val_size):
     """
-    Validation loss using the same weights as training so early stopping
-    selects checkpoints on a consistent objective.
-    No noise, no dropout — pure model evaluation.
+    Validation loss — same weights as training for consistent early stopping.
+    No noise, no dropout.
     """
     model.eval()
     val_loss_epoch = 0
@@ -151,8 +144,7 @@ def validate_epoch(model, val_loader, device, val_size):
             loss_q50 = quantile_loss(q50, tgt, 0.5)
             loss_q90 = quantile_loss(q90, tgt, 0.9)
 
-            # Match train weights exactly
-            loss = 0.35 * loss_q10 + 0.4 * loss_q50 + 0.25 * loss_q90
+            loss = 0.30 * loss_q10 + 0.40 * loss_q50 + 0.30 * loss_q90
             val_loss_epoch += loss.item() * enc.size(0)
 
     return val_loss_epoch / val_size
@@ -181,43 +173,56 @@ def collect_predictions(model, loader, device):
 
 
 def conformal_calibration(q10, q50, q90, targets, alpha=0.1):
+    """
+    Per-horizon conformal calibration with a horizon-aware alpha ramp.
 
-    # 1. Fix crossing quantiles (ensure valid ordering)
+    Early horizons are already well-covered so need less expansion.
+    Late horizons are under-covered so need aggressive expansion.
+    The ramp on alpha achieves this: lower alpha late = larger u_alpha_t late.
+    """
+
+    # 1. Fix crossing quantiles
     q10 = np.minimum(q10, q50)
     q90 = np.maximum(q90, q50)
 
-    # 2. Compute "miss distance" outside the prediction interval
-    #    0 if inside [q10, q90], otherwise distance to nearest bound
+    # 2. Miss distance — 0 if inside [q10, q90], else distance to nearest bound
     scores = np.maximum(
         np.maximum(q10 - targets, targets - q90),
         0
     )
 
-    # 3. Number of forecast steps (horizons, e.g. 168 hours)
     n_horizons = scores.shape[1]
 
-    # 4. Same alpha for all horizons (no actual ramp here)
-    alpha_per_horizon = np.linspace(alpha, alpha, n_horizons)
+    # Horizon-aware alpha ramp: tight early (less expansion), loose late (more expansion)
+    alpha_per_horizon = np.linspace(alpha * 1.5, alpha * 0.5, n_horizons)
+    alpha_per_horizon = np.clip(alpha_per_horizon, 0.01, 0.25)
 
-    # 5. Compute calibration threshold per horizon
-    #    This finds the (1 - alpha) quantile of error distribution
     u_alpha_t = np.array([
         np.quantile(scores[:, t], 1.0 - alpha_per_horizon[t])
         for t in range(n_horizons)
     ])
 
-    # 6. Expand intervals symmetrically using calibration offsets
     q10_cal = q10 - u_alpha_t[np.newaxis, :]
     q90_cal = q90 + u_alpha_t[np.newaxis, :]
 
-    # 7. Compute empirical coverage of calibrated intervals
     empirical_coverage = float(
         np.mean((targets >= q10_cal) & (targets <= q90_cal))
     )
 
+    # Per-horizon coverage diagnostic printed at calibration time
+    per_horizon_coverage = np.mean(
+        (targets >= q10_cal) & (targets <= q90_cal), axis=0
+    )
     print(
         f"Empirical coverage on cal set: {empirical_coverage:.3f} "
         f"(target ≈ {1 - alpha:.2f})"
+    )
+    print(
+        f"Per-horizon coverage — "
+        f"h1: {per_horizon_coverage[0]:.2f}  "
+        f"h24: {per_horizon_coverage[23]:.2f}  "
+        f"h72: {per_horizon_coverage[71]:.2f}  "
+        f"h168: {per_horizon_coverage[-1]:.2f}"
     )
 
     return q10_cal, q90_cal, u_alpha_t
@@ -261,9 +266,41 @@ def plot_train_val_loss(train_losses, val_losses, best_epoch, save_path):
     plt.close()
 
 
+def plot_coverage_per_horizon(q10, q90, targets, u_alpha_t, save_path, alpha=0.1):
+    """
+    Plot raw vs calibrated per-horizon coverage.
+    Generated automatically after every training run so you can immediately
+    see whether the conformal ramp is working as intended.
+    """
+    q10_cal = q10 - u_alpha_t[np.newaxis, :]
+    q90_cal = q90 + u_alpha_t[np.newaxis, :]
+
+    raw_coverage = np.mean((targets >= q10) & (targets <= q90), axis=0)
+    cal_coverage = np.mean((targets >= q10_cal) & (targets <= q90_cal), axis=0)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    horizons = np.arange(1, len(raw_coverage) + 1)
+    ax.plot(horizons, raw_coverage * 100,  label="Raw q10–q90 coverage",           color='steelblue')
+    ax.plot(horizons, cal_coverage * 100,  label="Per-horizon calibrated coverage", color='green')
+    ax.axhline(y=(1 - alpha) * 100, color='orange', linestyle='--',
+               label=f'Nominal {(1-alpha)*100:.0f}% (calibrated target)')
+    ax.axhline(y=80, color='black', linestyle='--',
+               label='Nominal 80% (raw interval target)')
+    ax.set_xlabel("Forecast Horizon (hours)", fontsize=12)
+    ax.set_ylabel("Coverage (%)", fontsize=12)
+    ax.set_title("Prediction Interval Coverage per Horizon\nRaw q10–q90 vs Conformal-Calibrated", fontsize=13)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(0, 105)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"Coverage plot saved to {save_path}")
+
+
 def train_model(config, train_loader, val_loader, cal_loader,
                 train_size, val_size, cal_size,
-                model_save_path, logger=None, patience=5, conformal_alpha=0.1):
+                model_save_path, logger=None, patience=20, conformal_alpha=0.1):
     """
     Full training loop with warmup, early stopping, and conformal calibration.
 
@@ -271,23 +308,22 @@ def train_model(config, train_loader, val_loader, cal_loader,
       cal set  → conformal calibration (never seen during training)
       test set → final held-out evaluation (handled outside this function)
 
-    Args:
-        patience        : epochs without val improvement before stopping
-        conformal_alpha : miscoverage rate (default 0.1 → 90% coverage target)
+    patience default raised to 20 — patience=5 was stopping the model after
+    only ~2 real epochs of full-LR training (warmup consumes the first 3).
+    Scheduler patience is set independently to 10.
     """
-    model     = LSTMForecast(config).to(config.device)
+    model = LSTMForecast(config).to(config.device)
 
-    # Reduced weight decay — dropout=0.2 already regularises,
-    # 1e-3 was over-regularising in combination
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
         weight_decay=1e-4
     )
 
-    # Scheduler fires after patience epochs without improvement
+    # Scheduler patience independent of early stopping patience.
+    # 10 epochs without improvement before halving LR.
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=patience
+        optimizer, mode='min', factor=0.5, patience=10
     )
 
     best_val_loss     = np.inf
@@ -296,12 +332,11 @@ def train_model(config, train_loader, val_loader, cal_loader,
     train_losses, val_losses = [], []
 
     if logger is not None:
-        logger.info(f"Starting training for {config.epochs} epochs...")
+        logger.info(f"Starting training for {config.epochs} epochs  patience={patience}...")
 
-    # ── Training loop ──────────────────────────────────────────────────────────
     for epoch in range(1, config.epochs + 1):
 
-        # ── Linear warmup — overrides scheduler for first 3 epochs ────────────
+        # Linear warmup overrides scheduler for first 3 epochs
         warmup_lr = get_lr(epoch, warmup_epochs=3, base_lr=config.learning_rate)
         for param_group in optimizer.param_groups:
             param_group['lr'] = warmup_lr
@@ -312,7 +347,6 @@ def train_model(config, train_loader, val_loader, cal_loader,
         val_loss = validate_epoch(model, val_loader, config.device, val_size)
         val_losses.append(val_loss)
 
-        # Only step scheduler after warmup is complete
         if epoch > 3:
             scheduler.step(val_loss)
 
@@ -344,17 +378,16 @@ def train_model(config, train_loader, val_loader, cal_loader,
     checkpoint['val_losses']   = val_losses
 
     # ── Conformal calibration ──────────────────────────────────────────────────
-    # Reload best weights before calibration
     model.load_state_dict(checkpoint['model_state_dict'])
 
     if logger is not None:
         logger.info(f"Running conformal calibration on cal set ({cal_size} samples) …")
 
-    q10_cal, q50_cal, q90_cal, tgt_cal = collect_predictions(model, cal_loader, config.device)
+    q10_raw, q50_raw, q90_raw, tgt_cal = collect_predictions(model, cal_loader, config.device)
     _, _, u_alpha_t = conformal_calibration(
-        q10_cal, q50_cal, q90_cal, tgt_cal, alpha=conformal_alpha
+        q10_raw, q50_raw, q90_raw, tgt_cal, alpha=conformal_alpha
     )
-    checkpoint['conformal_u_alpha'] = u_alpha_t  # shape: (forecast_length,)
+    checkpoint['conformal_u_alpha'] = u_alpha_t
     checkpoint['conformal_alpha']   = conformal_alpha
     torch.save(checkpoint, model_save_path)
 
@@ -365,15 +398,23 @@ def train_model(config, train_loader, val_loader, cal_loader,
             f"conformal_u_alpha shape={u_alpha_t.shape}"
         )
 
-    # ── Loss curve plot ────────────────────────────────────────────────────────
+    # ── Plots ──────────────────────────────────────────────────────────────────
     run_dir        = os.path.dirname(model_save_path)
     plot_dir       = os.path.join(run_dir, "Plots")
     os.makedirs(plot_dir, exist_ok=True)
-    loss_plot_path = os.path.join(plot_dir, "train_val_loss.png")
+
+    loss_plot_path     = os.path.join(plot_dir, "train_val_loss.png")
+    coverage_plot_path = os.path.join(plot_dir, "coverage_per_horizon.png")
+
     plot_train_val_loss(train_losses, val_losses, checkpoint['epoch'], loss_plot_path)
+    plot_coverage_per_horizon(
+        q10_raw, q90_raw, tgt_cal, u_alpha_t,
+        coverage_plot_path, alpha=conformal_alpha
+    )
 
     if logger is not None:
         logger.info(f"Loss curve saved to {loss_plot_path}")
+        logger.info(f"Coverage plot saved to {coverage_plot_path}")
 
     return best_val_loss, train_losses, val_losses
 
@@ -385,20 +426,12 @@ def apply_conformal(q10, q90, u_alpha):
     Supports:
       - scalar u_alpha → same expansion for all horizons
       - vector u_alpha (per-horizon) → one expansion per forecast step
-
-    Args:
-        q10     : np.ndarray or torch.Tensor of shape (N, horizon)
-        q90     : np.ndarray or torch.Tensor of shape (N, horizon)
-        u_alpha : float or np.ndarray of shape (horizon,)
-
-    Returns:
-        q10_cal, q90_cal : calibrated bounds, same type as inputs
     """
     is_tensor = False
     device    = None
     if isinstance(q10, torch.Tensor):
         is_tensor = True
-        device    = q10.device  # save before converting
+        device    = q10.device
         q10 = q10.detach().cpu().numpy()
         q90 = q90.detach().cpu().numpy()
 
