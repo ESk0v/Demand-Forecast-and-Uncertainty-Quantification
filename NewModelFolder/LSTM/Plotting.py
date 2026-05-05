@@ -26,7 +26,7 @@ WEATHER_DECODER_COLS = slice(6, 11)   # decoder indices that carry weather forec
 # Split helper — must mirror LSTMTraining.py exactly
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_split_indices(n_total, val_ratio=0.20, cal_ratio=0.10, test_ratio=0.10):
+def get_split_indices(n_total, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
     """
     Returns (train_size, valcal_size, test_size).
 

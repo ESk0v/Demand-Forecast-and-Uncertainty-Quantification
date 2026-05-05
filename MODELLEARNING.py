@@ -65,7 +65,7 @@ class LSTMForecast(nn.Module):
         super(LSTMForecast, self).__init__()
         self.config = config
 
-        self.encoderLstm = nn.LSTM(
+        self.encoder_lstm = nn.LSTM(
             input_size=config.encoder_features,
             hidden_size=config.hidden_size,
             num_layers=config.num_layers,
@@ -73,7 +73,7 @@ class LSTMForecast(nn.Module):
             dropout=config.dropout if config.num_layers > 1 else 0.0
         )
 
-        self.decoderLstm = nn.LSTM(
+        self.decoder_lstm = nn.LSTM(
             input_size=config.decoder_features,
             hidden_size=config.hidden_size,
             num_layers=config.num_layers,
@@ -81,23 +81,22 @@ class LSTMForecast(nn.Module):
             dropout=config.dropout if config.num_layers > 1 else 0.0
         )
 
-        self.uncertaintyDecoderLstm = nn.LSTM(
+        self.spread_lstm = nn.LSTM(
             input_size=config.decoder_features,
-            hidden_size=config.hidden_size, #// 2,
+            hidden_size=config.hidden_size // 2,
             num_layers=1,
             batch_first=True,
             dropout=0.0
         )
 
-        self.dropout                        = nn.Dropout(config.dropout)
-        self.context_dropout                = nn.Dropout(config.context_dropout)
-        self.uncertaintyDecoderLstm_c       = nn.Linear(config.hidden_size, config.hidden_size)
-        self.uncertaintyDecoderLstm_h       = nn.Linear(config.hidden_size, config.hidden_size)
-        self.decoder_h                      = nn.Linear(config.hidden_size, config.hidden_size)
-        self.decoder_c                      = nn.Linear(config.hidden_size, config.hidden_size)
-        self.fc_decoderMedian               = nn.Linear(config.hidden_size, 1)
-        self.fc_uncertaintyDecoderLow       = nn.Linear(config.hidden_size, 1) #// 2, 1)  # q50 - spread_lo = q10
-        self.fc_uncertaintyDecoderHigh      = nn.Linear(config.hidden_size, 1) #// 2, 1)  # q50 + spread_hi = q90
+        self.spread_init_proj = nn.Linear(config.hidden_size, config.hidden_size // 2)
+
+        self.dropout         = nn.Dropout(config.dropout)
+        self.context_dropout = nn.Dropout(config.context_dropout)
+
+        self.fc_q50       = nn.Linear(config.hidden_size,     1)
+        self.fc_spread_lo = nn.Linear(config.hidden_size // 2, 1) 
+        self.fc_spread_hi = nn.Linear(config.hidden_size // 2, 1) 
 
         self._init_weights()
 
@@ -120,73 +119,45 @@ class LSTMForecast(nn.Module):
                 param.data[n // 4 : n // 2].fill_(1.0)  # forget gate bias
 
             # Output projection weights
-            elif any(x in name for x in ['fc_decoderMedian.weight', 'fc_uncertaintyDecoderLow.weight', 'fc_uncertaintyDecoderHigh.weight']):
+            elif any(x in name for x in ['fc_q50.weight', 'fc_spread_lo.weight', 'fc_spread_hi.weight']):
                 nn.init.xavier_uniform_(param.data)
 
             # Output projection biases
-            elif any(x in name for x in ['fc_decoderMedian.bias', 'fc_uncertaintyDecoderLow.bias', 'fc_uncertaintyDecoderHigh.bias']):
+            elif any(x in name for x in ['fc_q50.bias', 'fc_spread_lo.bias', 'fc_spread_hi.bias']):
                 nn.init.constant_(param.data, 0)
 
             # Spread init projection
-            elif 'uncertaintyDecoderLstm_c.weight' in name:
+            elif 'spread_init_proj.weight' in name:
                 nn.init.xavier_uniform_(param.data)
 
-            elif 'uncertaintyDecoderLstm_h.weight' in name:
-                nn.init.xavier_uniform_(param.data)
-            
-            elif 'decoder_h.weight' in name:
-                nn.init.xavier_uniform_(param.data)
-            
-            elif 'decoder_c.weight' in name:
-                nn.init.xavier_uniform_(param.data)
-
-            elif 'uncertaintyDecoderLstm_h.bias' in name:
-                nn.init.constant_(param.data, 0)
-
-            elif 'uncertaintyDecoderLstm_c.bias' in name:
-                nn.init.constant_(param.data, 0)
-
-            elif 'decoder_h.bias' in name:
-                nn.init.constant_(param.data, 0)
-            
-            elif 'decoder_c.bias' in name:
+            elif 'spread_init_proj.bias' in name:
                 nn.init.constant_(param.data, 0)
 
     def forward(self, encoder_input, decoder_input):
 
-        _, (hidden, cell) = self.encoderLstm(encoder_input)
+        _, (hidden, cell) = self.encoder_lstm(encoder_input)
         hidden = self.context_dropout(hidden)
         cell   = self.context_dropout(cell)
 
-        decoder_h0 = torch.tanh(
-            self.decoder_h(hidden[-1].detach())
-        ).unsqueeze(0)
-
-        decoder_c0 = torch.tanh(
-            self.decoder_c(cell[-1].detach())
-        ).unsqueeze(0)
-        decoder_output, _  = self.decoderLstm(decoder_input, (decoder_h0, decoder_c0))
-        decoder_output     = self.dropout(decoder_output)
-        q50                = self.fc_decoderMedian(decoder_output).squeeze(-1)
+        decoder_output, _ = self.decoder_lstm(decoder_input, (hidden, cell))
+        decoder_output    = self.dropout(decoder_output)
+        q50               = self.fc_q50(decoder_output).squeeze(-1)
 
         spread_h0 = torch.tanh(
-            self.uncertaintyDecoderLstm_h(hidden[-1].detach())
-        ).unsqueeze(0)
+            self.spread_init_proj(cell[-1])     # [batch, hidden_size // 2]
+        ).unsqueeze(0)                          # [1, batch, hidden_size // 2]
 
-        spread_c0 = torch.tanh(
-            self.uncertaintyDecoderLstm_c(cell[-1].detach())
-        ).unsqueeze(0)
-        #spread_c0 = torch.zeros_like(spread_h0)
+        spread_c0 = torch.zeros_like(spread_h0)
 
-        spread_output, _ = self.uncertaintyDecoderLstm(decoder_input, (spread_h0, spread_c0))
-        spread_output     = self.dropout(spread_output)
+        spread_output, _ = self.spread_lstm(decoder_input, (spread_h0, spread_c0))
+        spread_output    = self.dropout(spread_output)
 
-        spread_lo = nn.functional.softplus(self.fc_uncertaintyDecoderLow(spread_output).squeeze(-1))
-        spread_hi = nn.functional.softplus(self.fc_uncertaintyDecoderHigh(spread_output).squeeze(-1))
+        spread_lo = nn.functional.softplus(self.fc_spread_lo(spread_output).squeeze(-1))
+        spread_hi = nn.functional.softplus(self.fc_spread_hi(spread_output).squeeze(-1))
 
-        horizon_steps = decoder_input.shape[1]
+        horizon_steps = decoder_input.shape[1]   # 168
         ramp = torch.linspace(0.2, 1.0, horizon_steps, device=decoder_input.device)
-        ramp = ramp.unsqueeze(0)
+        ramp = ramp.unsqueeze(0)                 # [1, 168] — broadcasts over batch
 
         q10 = q50 - spread_lo * ramp
         q90 = q50 + spread_hi * ramp

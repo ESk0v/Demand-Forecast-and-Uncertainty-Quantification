@@ -1,3 +1,4 @@
+from pyexpat import model
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, Subset
@@ -9,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from LSTMModel import LSTMForecast
 
 
-def load_and_split_dataset(dataset_path, val_ratio=0.20, cal_ratio=0.10, test_ratio=0.10):
+def load_and_split_dataset(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
     """
     Chronological 4-way split — no data leakage.
 
@@ -69,7 +70,7 @@ def get_lr(epoch, warmup_epochs=3, base_lr=1e-4):
     return base_lr
 
 
-def train_epoch(model, train_loader, optimizer, device, train_size):
+def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, train_size):
     """
     One full pass over the training set.
 
@@ -97,25 +98,48 @@ def train_epoch(model, train_loader, optimizer, device, train_size):
         enc = enc.clone()
         enc[:, :, 8:] += noise
 
-        optimizer.zero_grad()
+        #optimizer.zero_grad()
+        optimizer_point.zero_grad()
+        optimizer_spread.zero_grad()
         q10, q50, q90 = model(enc, dec)
 
-        loss_q10 = quantile_loss(q10, tgt, 0.1)
-        loss_q50 = quantile_loss(q50, tgt, 0.5)
-        loss_q90 = quantile_loss(q90, tgt, 0.9)
+        #loss_q10 = quantile_loss(q10, tgt, 0.1)
+        #loss_q50 = quantile_loss(q50, tgt, 0.5)
+        #loss_q90 = quantile_loss(q90, tgt, 0.9)
 
         # Soft crossing penalty
+        #crossing_penalty = (
+        #    torch.mean(torch.relu(q10 - q50)) +
+        #    torch.mean(torch.relu(q50 - q90))
+        #) * 0.1
+
+        #loss = 0.30 * loss_q10 + 0.40 * loss_q50 + 0.30 * loss_q90 + crossing_penalty
+
+        loss_median   = quantile_loss(q50, tgt, q=0.5)
+        loss_interval = interval_score_loss(q10, q90, tgt, alpha=0.2)
         crossing_penalty = (
-            torch.mean(torch.relu(q10 - q50)) +
-            torch.mean(torch.relu(q50 - q90))
+            torch.mean(torch.relu(q10 - q50)) + torch.mean(torch.relu(q50 - q90))
         ) * 0.1
 
-        loss = 0.30 * loss_q10 + 0.40 * loss_q50 + 0.30 * loss_q90 + crossing_penalty
-        loss.backward()
+        loss_median.backward(retain_graph=True)
+        loss_spread = loss_interval + crossing_penalty
+        loss_spread.backward()
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
-        epoch_loss += loss.item() * enc.size(0)
+        torch.nn.utils.clip_grad_norm_(model.encoderLstm.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.decoderLstm.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.fc_decoderMedian.parameters(),       max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.decoder_h.parameters(),       max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.decoder_c.parameters(),       max_norm=1.0)
+        optimizer_point.step()
+
+        torch.nn.utils.clip_grad_norm_(model.uncertaintyDecoderLstm.parameters(),      max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.fc_uncertaintyDecoderLow.parameters(),     max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.fc_uncertaintyDecoderHigh.parameters(),     max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.uncertaintyDecoderLstm_c.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.uncertaintyDecoderLstm_h.parameters(), max_norm=1.0)
+        optimizer_spread.step()
+
+        epoch_loss += (loss_median + loss_interval).item() * enc.size(0)
 
         q10_le_q50.append((q10 <= q50).float().mean().item())
         q50_le_q90.append((q50 <= q90).float().mean().item())
@@ -140,11 +164,16 @@ def validate_epoch(model, val_loader, device, val_size):
 
             q10, q50, q90 = model(enc, dec)
 
-            loss_q10 = quantile_loss(q10, tgt, 0.1)
-            loss_q50 = quantile_loss(q50, tgt, 0.5)
-            loss_q90 = quantile_loss(q90, tgt, 0.9)
+            #loss_q10 = quantile_loss(q10, tgt, 0.1)
+            #loss_q50 = quantile_loss(q50, tgt, 0.5)
+            #loss_q90 = quantile_loss(q90, tgt, 0.9)
 
-            loss = 0.30 * loss_q10 + 0.40 * loss_q50 + 0.30 * loss_q90
+            #loss = 0.30 * loss_q10 + 0.40 * loss_q50 + 0.30 * loss_q90
+
+            loss_interval = interval_score_loss(q10, q90, tgt, alpha=0.2)
+            loss_median   = quantile_loss(q50, tgt, q=0.5)
+            loss = 0.6 * loss_interval + 0.4 * loss_median
+
             val_loss_epoch += loss.item() * enc.size(0)
 
     return val_loss_epoch / val_size
@@ -159,6 +188,7 @@ def collect_predictions(model, loader, device):
         for enc, dec, tgt in loader:
             enc, dec, tgt = enc.to(device), dec.to(device), tgt.to(device)
             q10, q50, q90 = model(enc, dec)
+
             all_q10.append(q10.cpu().numpy())
             all_q50.append(q50.cpu().numpy())
             all_q90.append(q90.cpu().numpy())
@@ -228,16 +258,17 @@ def conformal_calibration(q10, q50, q90, targets, alpha=0.1):
     return q10_cal, q90_cal, u_alpha_t
 
 
-def save_checkpoint(model, optimizer, config, epoch, val_loss,
+def save_checkpoint(model, optimizer_point, optimizer_spread, config, epoch, val_loss,
                     train_losses, val_losses, model_save_path):
     torch.save({
-        'model_state_dict':     model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'config':               vars(config),
-        'epoch':                epoch,
-        'val_loss':             val_loss,
-        'train_losses':         train_losses.copy(),
-        'val_losses':           val_losses.copy(),
+        'model_state_dict':          model.state_dict(),
+        'optimizer_point_state_dict': optimizer_point.state_dict(),
+        'optimizer_spread_state_dict': optimizer_spread.state_dict(),
+        'config':                    vars(config),
+        'epoch':                     epoch,
+        'val_loss':                  val_loss,
+        'train_losses':              train_losses.copy(),
+        'val_losses':                val_losses.copy(),
     }, model_save_path)
 
 
@@ -314,16 +345,39 @@ def train_model(config, train_loader, val_loader, cal_loader,
     """
     model = LSTMForecast(config).to(config.device)
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config.learning_rate,
-        weight_decay=1e-4
-    )
+    #optimizer = torch.optim.AdamW(
+    #    model.parameters(),
+    #    lr=config.learning_rate,
+    #    weight_decay=1e-4
+    #)
+
+    optimizer_point = torch.optim.AdamW([
+        {'params': model.encoderLstm.parameters()},
+        {'params': model.decoderLstm.parameters()},
+        {'params': model.fc_decoderMedian.parameters()},
+        {'params': model.decoder_h.parameters()},
+        {'params': model.decoder_c.parameters()},
+    ], lr=config.learning_rate, weight_decay=1e-4)
+
+    optimizer_spread = torch.optim.AdamW([
+        {'params': model.uncertaintyDecoderLstm.parameters()},
+        {'params': model.fc_uncertaintyDecoderLow.parameters()},
+        {'params': model.fc_uncertaintyDecoderHigh.parameters()},
+        {'params': model.uncertaintyDecoderLstm_h.parameters()},
+        {'params': model.uncertaintyDecoderLstm_c.parameters()},
+    ], lr=config.learning_rate, weight_decay=1e-4)
 
     # Scheduler patience independent of early stopping patience.
     # 10 epochs without improvement before halving LR.
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=10
+    #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #    optimizer, mode='min', factor=0.5, patience=10
+    #)
+
+    scheduler_point = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer_point, mode='min', factor=0.5, patience=10
+    )
+    scheduler_spread = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer_spread, mode='min', factor=0.5, patience=10
     )
 
     best_val_loss     = np.inf
@@ -338,19 +392,25 @@ def train_model(config, train_loader, val_loader, cal_loader,
 
         # Linear warmup overrides scheduler for first 3 epochs
         warmup_lr = get_lr(epoch, warmup_epochs=3, base_lr=config.learning_rate)
-        for param_group in optimizer.param_groups:
+        #for param_group in optimizer.param_groups:
+        #    param_group['lr'] = warmup_lr
+
+        for param_group in optimizer_point.param_groups:
+            param_group['lr'] = warmup_lr
+        for param_group in optimizer_spread.param_groups:
             param_group['lr'] = warmup_lr
 
-        train_loss = train_epoch(model, train_loader, optimizer, config.device, train_size)
+        train_loss = train_epoch(model, train_loader, optimizer_point, optimizer_spread, config.device, train_size)
         train_losses.append(train_loss)
 
         val_loss = validate_epoch(model, val_loader, config.device, val_size)
         val_losses.append(val_loss)
 
         if epoch > 3:
-            scheduler.step(val_loss)
+            scheduler_point.step(val_loss)
+            scheduler_spread.step(val_loss)
 
-        current_lr = optimizer.param_groups[0]['lr']
+        current_lr = optimizer_point.param_groups[0]['lr']
 
         if val_loss < best_val_loss:
             best_val_loss     = val_loss
@@ -360,8 +420,8 @@ def train_model(config, train_loader, val_loader, cal_loader,
                 f"Epoch {epoch}: Train={train_loss:.4f}  Val={val_loss:.4f}  LR={current_lr:.2e}  "
                 f"[best — saving checkpoint]"
             )
-            save_checkpoint(model, optimizer, config, epoch, val_loss,
-                            train_losses, val_losses, model_save_path)
+            save_checkpoint(model, optimizer_point, optimizer_spread, config, epoch, val_loss,
+    train_losses, val_losses, model_save_path)
         else:
             logger.info(
                 f"Epoch {epoch}: Train={train_loss:.4f}  Val={val_loss:.4f}  LR={current_lr:.2e}  "
@@ -452,3 +512,9 @@ def apply_conformal(q10, q90, u_alpha):
 def quantile_loss(pred, target, q):
     error = target - pred
     return torch.mean(torch.max(q * error, (q - 1) * error))
+
+def interval_score_loss(q_low, q_high, target, alpha=0.2):
+    width        = q_high - q_low
+    penalty_low  = (2 / alpha) * torch.clamp(q_low - target, min=0)
+    penalty_high = (2 / alpha) * torch.clamp(target - q_high, min=0)
+    return torch.mean(width + penalty_low + penalty_high)
