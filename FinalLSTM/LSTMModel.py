@@ -81,7 +81,7 @@ class LSTMForecast(nn.Module):
 
         self.dropout                        = nn.Dropout(config.dropout)
         self.context_dropout                = nn.Dropout(config.context_dropout)
-        self.ramp_layer                     = nn.Linear(1, 1)
+        self.ramp_net                       = nn.Sequential(nn.Linear(1, 16),nn.ReLU(),nn.Linear(16, 1),nn.Softplus())
         self.fc_decoderMedian               = nn.Linear(config.hidden_size, 1)
         self.fc_uncertaintyDecoderLow       = nn.Linear(config.hidden_size, 1) #// 2, 1)  # q50 - spread_lo = q10
         self.fc_uncertaintyDecoderHigh      = nn.Linear(config.hidden_size, 1) #// 2, 1)  # q50 + spread_hi = q90
@@ -114,11 +114,12 @@ class LSTMForecast(nn.Module):
             elif any(x in name for x in ['fc_decoderMedian.bias', 'fc_uncertaintyDecoderLow.bias', 'fc_uncertaintyDecoderHigh.bias']):
                 nn.init.constant_(param.data, 0)
 
-            elif 'ramp_layer.weight' in name:
-                nn.init.constant_(param.data, 2.0)   # sigmoid(2x) starts resembling a 0→1 ramp
-            elif 'ramp_layer.bias' in name:
-                nn.init.constant_(param.data, -1.0)
+            elif 'ramp_net' in name and 'weight' in name:
+                nn.init.xavier_uniform_(param.data)
 
+            elif 'ramp_net' in name and 'bias' in name:
+                nn.init.constant_(param.data, 0)
+                
     def forward(self, encoder_input, decoder_input):
 
         # Encoder
@@ -139,9 +140,14 @@ class LSTMForecast(nn.Module):
         spread_hi = nn.functional.softplus(self.fc_uncertaintyDecoderHigh(spread_output).squeeze(-1))
 
         horizon_steps = decoder_input.shape[1]
-        ramp = torch.sigmoid(self.ramp_layer(
-            torch.linspace(0, 1, horizon_steps, device=decoder_input.device).unsqueeze(-1)
-        )).squeeze(-1).unsqueeze(0)
+        horizon_grid = torch.linspace(
+            0, 1, horizon_steps,
+            device=decoder_input.device
+        ).unsqueeze(-1)
+
+        ramp = self.ramp_net(horizon_grid) \
+            .squeeze(-1) \
+            .unsqueeze(0)
 
         # Final Quantiles
         q10 = q50 - spread_lo * ramp

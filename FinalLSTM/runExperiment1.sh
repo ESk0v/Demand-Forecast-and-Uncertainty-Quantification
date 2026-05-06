@@ -35,5 +35,5 @@
 cd /ceph/project/SW6-Group18-Abvaerk
 source /ceph/project/SW6-Group18-Abvaerk/.venv/bin/activate
 
-python -u FinalLSTM/Experiments/Experiment_1/main.py
+python -u FinalLSTM/Experiments/Experiment_1/Main.py
 python -u FinalLSTM/Experiments/Experiment_1/Plot.py 
