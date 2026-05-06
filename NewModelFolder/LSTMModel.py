@@ -91,10 +91,7 @@ class LSTMForecast(nn.Module):
 
         self.dropout                        = nn.Dropout(config.dropout)
         self.context_dropout                = nn.Dropout(config.context_dropout)
-        self.uncertaintyDecoderLstm_c       = nn.Linear(config.hidden_size, config.hidden_size)
-        self.uncertaintyDecoderLstm_h       = nn.Linear(config.hidden_size, config.hidden_size)
-        self.decoder_h                      = nn.Linear(config.hidden_size, config.hidden_size)
-        self.decoder_c                      = nn.Linear(config.hidden_size, config.hidden_size)
+        self.ramp_layer                     = nn.Linear(1, 1)
         self.fc_decoderMedian               = nn.Linear(config.hidden_size, 1)
         self.fc_uncertaintyDecoderLow       = nn.Linear(config.hidden_size, 1) #// 2, 1)  # q50 - spread_lo = q10
         self.fc_uncertaintyDecoderHigh      = nn.Linear(config.hidden_size, 1) #// 2, 1)  # q50 + spread_hi = q90
@@ -127,30 +124,10 @@ class LSTMForecast(nn.Module):
             elif any(x in name for x in ['fc_decoderMedian.bias', 'fc_uncertaintyDecoderLow.bias', 'fc_uncertaintyDecoderHigh.bias']):
                 nn.init.constant_(param.data, 0)
 
-            # Spread init projection
-            elif 'uncertaintyDecoderLstm_c.weight' in name:
-                nn.init.xavier_uniform_(param.data)
-
-            elif 'uncertaintyDecoderLstm_h.weight' in name:
-                nn.init.xavier_uniform_(param.data)
-            
-            elif 'decoder_h.weight' in name:
-                nn.init.xavier_uniform_(param.data)
-            
-            elif 'decoder_c.weight' in name:
-                nn.init.xavier_uniform_(param.data)
-
-            elif 'uncertaintyDecoderLstm_h.bias' in name:
-                nn.init.constant_(param.data, 0)
-
-            elif 'uncertaintyDecoderLstm_c.bias' in name:
-                nn.init.constant_(param.data, 0)
-
-            elif 'decoder_h.bias' in name:
-                nn.init.constant_(param.data, 0)
-            
-            elif 'decoder_c.bias' in name:
-                nn.init.constant_(param.data, 0)
+            elif 'ramp_layer.weight' in name:
+                nn.init.constant_(param.data, 2.0)   # sigmoid(2x) starts resembling a 0→1 ramp
+            elif 'ramp_layer.bias' in name:
+                nn.init.constant_(param.data, -1.0)
 
     def forward(self, encoder_input, decoder_input):
 
@@ -158,35 +135,20 @@ class LSTMForecast(nn.Module):
         hidden = self.context_dropout(hidden)
         cell   = self.context_dropout(cell)
 
-        decoder_h0 = torch.tanh(
-            self.decoder_h(hidden[-1].detach())
-        ).unsqueeze(0)
-
-        decoder_c0 = torch.tanh(
-            self.decoder_c(cell[-1].detach())
-        ).unsqueeze(0)
-        decoder_output, _  = self.decoderLstm(decoder_input, (decoder_h0, decoder_c0))
+        decoder_output, _  = self.decoderLstm(decoder_input, (hidden, cell))
         decoder_output     = self.dropout(decoder_output)
         q50                = self.fc_decoderMedian(decoder_output).squeeze(-1)
 
-        spread_h0 = torch.tanh(
-            self.uncertaintyDecoderLstm_h(hidden[-1].detach())
-        ).unsqueeze(0)
-
-        spread_c0 = torch.tanh(
-            self.uncertaintyDecoderLstm_c(cell[-1].detach())
-        ).unsqueeze(0)
-        #spread_c0 = torch.zeros_like(spread_h0)
-
-        spread_output, _ = self.uncertaintyDecoderLstm(decoder_input, (spread_h0, spread_c0))
+        spread_output, _ = self.uncertaintyDecoderLstm(decoder_input, (hidden.detach(), cell.detach()))
         spread_output     = self.dropout(spread_output)
 
         spread_lo = nn.functional.softplus(self.fc_uncertaintyDecoderLow(spread_output).squeeze(-1))
         spread_hi = nn.functional.softplus(self.fc_uncertaintyDecoderHigh(spread_output).squeeze(-1))
 
         horizon_steps = decoder_input.shape[1]
-        ramp = torch.linspace(0.2, 1.0, horizon_steps, device=decoder_input.device)
-        ramp = ramp.unsqueeze(0)
+        ramp = torch.sigmoid(self.ramp_layer(
+            torch.linspace(0, 1, horizon_steps, device=decoder_input.device).unsqueeze(-1)
+        )).squeeze(-1).unsqueeze(0)
 
         q10 = q50 - spread_lo * ramp
         q90 = q50 + spread_hi * ramp

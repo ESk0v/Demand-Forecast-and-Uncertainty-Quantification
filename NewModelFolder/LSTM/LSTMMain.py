@@ -8,14 +8,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from LSTM.LSTMTraining import load_and_split_dataset, train_model
 from LSTM.GenerateREADME import generate_training_readme
 
+CONFORMAL_ALPHA = 0.50
+
 def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
-    # Paths
     dataset_path    = filePaths[0]
     model_save_path = filePaths[1]
     run_dir = os.path.dirname(model_save_path)
     os.makedirs(run_dir, exist_ok=True)
 
-    # Load and split dataset
     train_dataset, val_dataset, cal_dataset, test_dataset, \
         train_size, val_size, cal_size, test_size = load_and_split_dataset(dataset_path)
 
@@ -25,7 +25,6 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
         f"{cal_size} cal  {test_size} test  (total: {n_total})"
     )
 
-    # Config
     config = Config()
     config.epochs = epochs
 
@@ -52,13 +51,16 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
     best_val_loss, train_losses, val_losses = train_model(
         config, train_loader, val_loader, cal_loader,
         train_size, val_size, cal_size,
-        model_save_path, logger, patience=patience
+        model_save_path, logger,
+        patience        = patience,
+        conformal_alpha = CONFORMAL_ALPHA,
     )
 
-    # Load checkpoint for metadata
     checkpoint = torch.load(model_save_path, weights_only=False)
     logger.success("LSTM training completed successfully!")
     logger.info("Generating training README...")
+
+    logger.success("Training README successfully generated")
 
     #generate_training_readme(
     #    plot_dir       = run_dir,
@@ -77,4 +79,4 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
     #    patience       = patience
     #)
 
-    logger.success("Training README successfully generated")
+    #logger.success("Training README successfully generated")

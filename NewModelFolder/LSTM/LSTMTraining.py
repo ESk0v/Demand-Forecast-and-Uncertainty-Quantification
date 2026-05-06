@@ -70,7 +70,7 @@ def get_lr(epoch, warmup_epochs=3, base_lr=1e-4):
     return base_lr
 
 
-def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, train_size):
+def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, train_size, conformal_alpha=0.2):
     """
     One full pass over the training set.
 
@@ -78,12 +78,8 @@ def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, 
         Small Gaussian noise prevents the model from over-relying on exact
         lag values, which would collapse early-horizon uncertainty.
 
-    Loss weights (0.30 / 0.40 / 0.30):
-        Symmetric tail weights so the model is equally penalised for being
-        wrong on both sides.
-
     Crossing penalty:
-        Soft penalty for q10 > q50 or q50 > q90.
+        Soft penalty for q_low > q50 or q50 > q_high.
     """
     model.train()
     epoch_loss = 0
@@ -93,30 +89,12 @@ def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, 
     for enc, dec, tgt in train_loader:
         enc, dec, tgt = enc.to(device), dec.to(device), tgt.to(device)
 
-        # ── Lag feature noise — training only ─────────────────────────────────
-        noise = torch.randn_like(enc[:, :, 8:]) * 0.05
-        enc = enc.clone()
-        enc[:, :, 8:] += noise
-
-        #optimizer.zero_grad()
         optimizer_point.zero_grad()
         optimizer_spread.zero_grad()
         q10, q50, q90 = model(enc, dec)
 
-        #loss_q10 = quantile_loss(q10, tgt, 0.1)
-        #loss_q50 = quantile_loss(q50, tgt, 0.5)
-        #loss_q90 = quantile_loss(q90, tgt, 0.9)
-
-        # Soft crossing penalty
-        #crossing_penalty = (
-        #    torch.mean(torch.relu(q10 - q50)) +
-        #    torch.mean(torch.relu(q50 - q90))
-        #) * 0.1
-
-        #loss = 0.30 * loss_q10 + 0.40 * loss_q50 + 0.30 * loss_q90 + crossing_penalty
-
         loss_median   = quantile_loss(q50, tgt, q=0.5)
-        loss_interval = interval_score_loss(q10, q90, tgt, alpha=0.2)
+        loss_interval = interval_score_loss(q10, q90, tgt, alpha=conformal_alpha)
         crossing_penalty = (
             torch.mean(torch.relu(q10 - q50)) + torch.mean(torch.relu(q50 - q90))
         ) * 0.1
@@ -125,18 +103,15 @@ def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, 
         loss_spread = loss_interval + crossing_penalty
         loss_spread.backward()
 
-        torch.nn.utils.clip_grad_norm_(model.encoderLstm.parameters(), max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(model.decoderLstm.parameters(), max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(model.fc_decoderMedian.parameters(),       max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(model.decoder_h.parameters(),       max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(model.decoder_c.parameters(),       max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.encoderLstm.parameters(),         max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.decoderLstm.parameters(),         max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.fc_decoderMedian.parameters(),    max_norm=1.0)
         optimizer_point.step()
 
         torch.nn.utils.clip_grad_norm_(model.uncertaintyDecoderLstm.parameters(),      max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(model.fc_uncertaintyDecoderLow.parameters(),     max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(model.fc_uncertaintyDecoderHigh.parameters(),     max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(model.uncertaintyDecoderLstm_c.parameters(), max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(model.uncertaintyDecoderLstm_h.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.fc_uncertaintyDecoderLow.parameters(),    max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.fc_uncertaintyDecoderHigh.parameters(),   max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.ramp_layer.parameters(),                  max_norm=1.0)
         optimizer_spread.step()
 
         epoch_loss += (loss_median + loss_interval).item() * enc.size(0)
@@ -150,7 +125,7 @@ def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, 
     return epoch_loss / train_size
 
 
-def validate_epoch(model, val_loader, device, val_size):
+def validate_epoch(model, val_loader, device, val_size, conformal_alpha=0.2):
     """
     Validation loss — same weights as training for consistent early stopping.
     No noise, no dropout.
@@ -164,13 +139,7 @@ def validate_epoch(model, val_loader, device, val_size):
 
             q10, q50, q90 = model(enc, dec)
 
-            #loss_q10 = quantile_loss(q10, tgt, 0.1)
-            #loss_q50 = quantile_loss(q50, tgt, 0.5)
-            #loss_q90 = quantile_loss(q90, tgt, 0.9)
-
-            #loss = 0.30 * loss_q10 + 0.40 * loss_q50 + 0.30 * loss_q90
-
-            loss_interval = interval_score_loss(q10, q90, tgt, alpha=0.2)
+            loss_interval = interval_score_loss(q10, q90, tgt, alpha=conformal_alpha)
             loss_median   = quantile_loss(q50, tgt, q=0.5)
             loss = 0.6 * loss_interval + 0.4 * loss_median
 
@@ -203,34 +172,23 @@ def collect_predictions(model, loader, device):
 
 
 def conformal_calibration(q10, q50, q90, targets, alpha=0.1):
-    """
-    Per-horizon conformal calibration with a horizon-aware alpha ramp.
-
-    Early horizons are already well-covered so need less expansion.
-    Late horizons are under-covered so need aggressive expansion.
-    The ramp on alpha achieves this: lower alpha late = larger u_alpha_t late.
-    """
-
     # 1. Fix crossing quantiles
     q10 = np.minimum(q10, q50)
     q90 = np.maximum(q90, q50)
 
-    # 2. Miss distance — 0 if inside [q10, q90], else distance to nearest bound
+    # 2. Non-conformity scores — 0 if inside [q10, q90], else distance to nearest bound
     scores = np.maximum(
         np.maximum(q10 - targets, targets - q90),
         0
-    )
+    )  # (N, H)
 
     n_horizons = scores.shape[1]
 
-    # Horizon-aware alpha ramp: tight early (less expansion), loose late (more expansion)
-    alpha_per_horizon = np.linspace(alpha * 1.5, alpha * 0.5, n_horizons)
-    alpha_per_horizon = np.clip(alpha_per_horizon, 0.01, 0.25)
-
+    # Flat alpha across all horizons — every horizon targets the same coverage
     u_alpha_t = np.array([
-        np.quantile(scores[:, t], 1.0 - alpha_per_horizon[t])
+        np.quantile(scores[:, t], 1.0 - alpha)
         for t in range(n_horizons)
-    ])
+    ])  # (H,)
 
     q10_cal = q10 - u_alpha_t[np.newaxis, :]
     q90_cal = q90 + u_alpha_t[np.newaxis, :]
@@ -239,7 +197,6 @@ def conformal_calibration(q10, q50, q90, targets, alpha=0.1):
         np.mean((targets >= q10_cal) & (targets <= q90_cal))
     )
 
-    # Per-horizon coverage diagnostic printed at calibration time
     per_horizon_coverage = np.mean(
         (targets >= q10_cal) & (targets <= q90_cal), axis=0
     )
@@ -261,14 +218,14 @@ def conformal_calibration(q10, q50, q90, targets, alpha=0.1):
 def save_checkpoint(model, optimizer_point, optimizer_spread, config, epoch, val_loss,
                     train_losses, val_losses, model_save_path):
     torch.save({
-        'model_state_dict':          model.state_dict(),
+        'model_state_dict':           model.state_dict(),
         'optimizer_point_state_dict': optimizer_point.state_dict(),
         'optimizer_spread_state_dict': optimizer_spread.state_dict(),
-        'config':                    vars(config),
-        'epoch':                     epoch,
-        'val_loss':                  val_loss,
-        'train_losses':              train_losses.copy(),
-        'val_losses':                val_losses.copy(),
+        'config':                     vars(config),
+        'epoch':                      epoch,
+        'val_loss':                   val_loss,
+        'train_losses':               train_losses.copy(),
+        'val_losses':                 val_losses.copy(),
     }, model_save_path)
 
 
@@ -301,7 +258,7 @@ def plot_coverage_per_horizon(q10, q90, targets, u_alpha_t, save_path, alpha=0.1
     """
     Plot raw vs calibrated per-horizon coverage.
     Generated automatically after every training run so you can immediately
-    see whether the conformal ramp is working as intended.
+    see whether the flat alpha calibration is working as intended.
     """
     q10_cal = q10 - u_alpha_t[np.newaxis, :]
     q90_cal = q90 + u_alpha_t[np.newaxis, :]
@@ -311,15 +268,13 @@ def plot_coverage_per_horizon(q10, q90, targets, u_alpha_t, save_path, alpha=0.1
 
     fig, ax = plt.subplots(figsize=(12, 5))
     horizons = np.arange(1, len(raw_coverage) + 1)
-    ax.plot(horizons, raw_coverage * 100,  label="Raw q10–q90 coverage",           color='steelblue')
-    ax.plot(horizons, cal_coverage * 100,  label="Per-horizon calibrated coverage", color='green')
+    ax.plot(horizons, raw_coverage * 100, label="Raw interval coverage",            color='steelblue')
+    ax.plot(horizons, cal_coverage * 100, label="Per-horizon calibrated coverage",  color='green')
     ax.axhline(y=(1 - alpha) * 100, color='orange', linestyle='--',
-               label=f'Nominal {(1-alpha)*100:.0f}% (calibrated target)')
-    ax.axhline(y=80, color='black', linestyle='--',
-               label='Nominal 80% (raw interval target)')
+               label=f'Nominal {(1 - alpha) * 100:.0f}% target')
     ax.set_xlabel("Forecast Horizon (hours)", fontsize=12)
     ax.set_ylabel("Coverage (%)", fontsize=12)
-    ax.set_title("Prediction Interval Coverage per Horizon\nRaw q10–q90 vs Conformal-Calibrated", fontsize=13)
+    ax.set_title("Prediction Interval Coverage per Horizon\nRaw vs Conformal-Calibrated", fontsize=13)
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
     ax.set_ylim(0, 105)
@@ -331,7 +286,7 @@ def plot_coverage_per_horizon(q10, q90, targets, u_alpha_t, save_path, alpha=0.1
 
 def train_model(config, train_loader, val_loader, cal_loader,
                 train_size, val_size, cal_size,
-                model_save_path, logger=None, patience=20, conformal_alpha=0.1):
+                model_save_path, logger=None, patience=20, conformal_alpha=0.2):
     """
     Full training loop with warmup, early stopping, and conformal calibration.
 
@@ -339,39 +294,23 @@ def train_model(config, train_loader, val_loader, cal_loader,
       cal set  → conformal calibration (never seen during training)
       test set → final held-out evaluation (handled outside this function)
 
-    patience default raised to 20 — patience=5 was stopping the model after
-    only ~2 real epochs of full-LR training (warmup consumes the first 3).
-    Scheduler patience is set independently to 10.
+    conformal_alpha controls both the interval training loss and the
+    conformal calibration step, ensuring they target the same coverage level.
     """
     model = LSTMForecast(config).to(config.device)
-
-    #optimizer = torch.optim.AdamW(
-    #    model.parameters(),
-    #    lr=config.learning_rate,
-    #    weight_decay=1e-4
-    #)
 
     optimizer_point = torch.optim.AdamW([
         {'params': model.encoderLstm.parameters()},
         {'params': model.decoderLstm.parameters()},
         {'params': model.fc_decoderMedian.parameters()},
-        {'params': model.decoder_h.parameters()},
-        {'params': model.decoder_c.parameters()},
     ], lr=config.learning_rate, weight_decay=1e-4)
 
     optimizer_spread = torch.optim.AdamW([
         {'params': model.uncertaintyDecoderLstm.parameters()},
         {'params': model.fc_uncertaintyDecoderLow.parameters()},
         {'params': model.fc_uncertaintyDecoderHigh.parameters()},
-        {'params': model.uncertaintyDecoderLstm_h.parameters()},
-        {'params': model.uncertaintyDecoderLstm_c.parameters()},
+        {'params': model.ramp_layer.parameters()},
     ], lr=config.learning_rate, weight_decay=1e-4)
-
-    # Scheduler patience independent of early stopping patience.
-    # 10 epochs without improvement before halving LR.
-    #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    #    optimizer, mode='min', factor=0.5, patience=10
-    #)
 
     scheduler_point = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer_point, mode='min', factor=0.5, patience=10
@@ -386,24 +325,30 @@ def train_model(config, train_loader, val_loader, cal_loader,
     train_losses, val_losses = [], []
 
     if logger is not None:
-        logger.info(f"Starting training for {config.epochs} epochs  patience={patience}...")
+        logger.info(
+            f"Starting training for {config.epochs} epochs  "
+            f"patience={patience}  conformal_alpha={conformal_alpha} "
+            f"(target coverage={(1 - conformal_alpha) * 100:.0f}%)"
+        )
 
     for epoch in range(1, config.epochs + 1):
 
         # Linear warmup overrides scheduler for first 3 epochs
         warmup_lr = get_lr(epoch, warmup_epochs=3, base_lr=config.learning_rate)
-        #for param_group in optimizer.param_groups:
-        #    param_group['lr'] = warmup_lr
-
         for param_group in optimizer_point.param_groups:
             param_group['lr'] = warmup_lr
         for param_group in optimizer_spread.param_groups:
             param_group['lr'] = warmup_lr
 
-        train_loss = train_epoch(model, train_loader, optimizer_point, optimizer_spread, config.device, train_size)
+        train_loss = train_epoch(
+            model, train_loader, optimizer_point, optimizer_spread,
+            config.device, train_size, conformal_alpha
+        )
         train_losses.append(train_loss)
 
-        val_loss = validate_epoch(model, val_loader, config.device, val_size)
+        val_loss = validate_epoch(
+            model, val_loader, config.device, val_size, conformal_alpha
+        )
         val_losses.append(val_loss)
 
         if epoch > 3:
@@ -421,7 +366,7 @@ def train_model(config, train_loader, val_loader, cal_loader,
                 f"[best — saving checkpoint]"
             )
             save_checkpoint(model, optimizer_point, optimizer_spread, config, epoch, val_loss,
-    train_losses, val_losses, model_save_path)
+                            train_losses, val_losses, model_save_path)
         else:
             logger.info(
                 f"Epoch {epoch}: Train={train_loss:.4f}  Val={val_loss:.4f}  LR={current_lr:.2e}  "
@@ -512,6 +457,7 @@ def apply_conformal(q10, q90, u_alpha):
 def quantile_loss(pred, target, q):
     error = target - pred
     return torch.mean(torch.max(q * error, (q - 1) * error))
+
 
 def interval_score_loss(q_low, q_high, target, alpha=0.2):
     width        = q_high - q_low
