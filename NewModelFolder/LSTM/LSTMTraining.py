@@ -95,7 +95,7 @@ def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, 
 
         loss_median   = quantile_loss(q50, tgt, q=0.5)
         loss_interval = interval_score_loss(q10, q90, tgt, alpha=conformal_alpha)
-        crossing_penalty = (
+        crossing_penalty = (    # TODO: Should be removed, as we already guarantee no quantile crossing
             torch.mean(torch.relu(q10 - q50)) + torch.mean(torch.relu(q50 - q90))
         ) * 0.1
 
