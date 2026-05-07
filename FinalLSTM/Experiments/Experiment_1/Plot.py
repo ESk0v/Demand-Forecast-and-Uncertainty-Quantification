@@ -22,6 +22,7 @@ Configure MODEL_CONFIGS below to point at your checkpoints.
 import os
 import sys
 import importlib
+from typing import Optional
 import numpy as np
 import torch
 import matplotlib
@@ -68,24 +69,24 @@ MODEL_CONFIGS = [
         epochs          = 50,
         patience        = 5,
     ),
-#    dict(
-#        name            = "80% target",
-#        module_dir      = "Model_4",
-#        dataset_path    = "Model_4/data/dataset.pt",
-#        model_save_path = "Model_4/checkpoints/model.pt",
-#        conformal_alpha = 0.20,   # 1 - 0.80
-#        epochs          = 50,
-#        patience        = 5,
-#    ),
-#    dict(
-#        name            = "90% target",
-#        module_dir      = "Model_5",
-#        dataset_path    = "Model_5/data/dataset.pt",
-#        model_save_path = "Model_5/checkpoints/model.pt",
-#        conformal_alpha = 0.10,   # 1 - 0.90
-#        epochs          = 50,
-#        patience        = 5,
-#    ),
+    dict(
+        name            = "80% target",
+        module_dir      = "Model_4",
+        dataset_path    = "Model_4/data/dataset.pt",
+        model_save_path = "Model_4/checkpoints/model.pt",
+        conformal_alpha = 0.20,   # 1 - 0.80
+        epochs          = 50,
+        patience        = 5,
+    ),
+    dict(
+        name            = "90% target",
+        module_dir      = "Model_5",
+        dataset_path    = "Model_5/data/dataset.pt",
+        model_save_path = "Model_5/checkpoints/model.pt",
+        conformal_alpha = 0.10,   # 1 - 0.90
+        epochs          = 50,
+        patience        = 5,
+    ),
 ]
 
 # Number of nominal coverage levels to evaluate (spread 0 → 1)
@@ -198,7 +199,7 @@ def coverage_boxplot_stats(
     q90_raw: np.ndarray,
     targets: np.ndarray,
     nominal_levels: np.ndarray,
-    samples_per_week: int | None = None,
+    samples_per_week: Optional[int] = None,
 ) -> dict:
     """
     For each nominal level p:

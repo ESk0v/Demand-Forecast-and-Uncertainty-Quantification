@@ -1,11 +1,9 @@
 from torch.utils.data import DataLoader
-from .LSTMModel import Config
+from LSTMModel import Config
 import os
 import sys
 import torch
-
-from .LSTMTraining import load_and_split_dataset, train_model
-# from LSTM.GenerateREADME import generate_training_readme
+from LSTMTraining import load_and_split_dataset, train_model
 
 CONFORMAL_ALPHA = 0.50
 

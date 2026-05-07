@@ -7,7 +7,7 @@ import os
 import sys
 import matplotlib.pyplot as plt
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from .LSTMModel import LSTMForecast
+from LSTMModel import LSTMForecast
 
 
 def load_and_split_dataset(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
