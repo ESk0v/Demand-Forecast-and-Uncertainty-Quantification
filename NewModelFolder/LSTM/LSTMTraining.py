@@ -111,7 +111,7 @@ def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, 
         torch.nn.utils.clip_grad_norm_(model.uncertaintyDecoderLstm.parameters(),      max_norm=1.0)
         torch.nn.utils.clip_grad_norm_(model.fc_uncertaintyDecoderLow.parameters(),    max_norm=1.0)
         torch.nn.utils.clip_grad_norm_(model.fc_uncertaintyDecoderHigh.parameters(),   max_norm=1.0)
-        torch.nn.utils.clip_grad_norm_(model.ramp_layer.parameters(),                  max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.ramp_net.parameters(),                  max_norm=1.0)
         optimizer_spread.step()
 
         epoch_loss += (loss_median + loss_interval).item() * enc.size(0)
@@ -309,7 +309,7 @@ def train_model(config, train_loader, val_loader, cal_loader,
         {'params': model.uncertaintyDecoderLstm.parameters()},
         {'params': model.fc_uncertaintyDecoderLow.parameters()},
         {'params': model.fc_uncertaintyDecoderHigh.parameters()},
-        {'params': model.ramp_layer.parameters()},
+        {'params': model.ramp_net.parameters()()},
     ], lr=config.learning_rate, weight_decay=1e-4)
 
     scheduler_point = torch.optim.lr_scheduler.ReduceLROnPlateau(

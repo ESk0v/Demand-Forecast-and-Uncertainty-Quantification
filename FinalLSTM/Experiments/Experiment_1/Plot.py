@@ -41,20 +41,51 @@ from torch.utils.data import DataLoader
 #    conformal_alpha – 1 – target_coverage stored in the checkpoint
 #
 MODEL_CONFIGS = [
-    dict(
-        name            = "60 % target",
+        dict(
+        name            = "50% target",
         module_dir      = "Model_1",
         dataset_path    = "Model_1/data/dataset.pt",
         model_save_path = "Model_1/checkpoints/model.pt",
-        conformal_alpha = 0.40,
+        conformal_alpha = 0.50,   # 1 - 0.50
+        epochs          = 50,
+        patience        = 5,
     ),
     dict(
-        name            = "80 % target",
+        name            = "60% target",
         module_dir      = "Model_2",
         dataset_path    = "Model_2/data/dataset.pt",
         model_save_path = "Model_2/checkpoints/model.pt",
-        conformal_alpha = 0.20,
+        conformal_alpha = 0.40,   # 1 - 0.60
+        epochs          = 50,
+        patience        = 5,
     ),
+    dict(
+        name            = "70% target",
+        module_dir      = "Model_3",
+        dataset_path    = "Model_3/data/dataset.pt",
+        model_save_path = "Model_3/checkpoints/model.pt",
+        conformal_alpha = 0.30,   # 1 - 0.70
+        epochs          = 50,
+        patience        = 5,
+    ),
+#    dict(
+#        name            = "80% target",
+#        module_dir      = "Model_4",
+#        dataset_path    = "Model_4/data/dataset.pt",
+#        model_save_path = "Model_4/checkpoints/model.pt",
+#        conformal_alpha = 0.20,   # 1 - 0.80
+#        epochs          = 50,
+#        patience        = 5,
+#    ),
+#    dict(
+#        name            = "90% target",
+#        module_dir      = "Model_5",
+#        dataset_path    = "Model_5/data/dataset.pt",
+#        model_save_path = "Model_5/checkpoints/model.pt",
+#        conformal_alpha = 0.10,   # 1 - 0.90
+#        epochs          = 50,
+#        patience        = 5,
+#    ),
 ]
 
 # Number of nominal coverage levels to evaluate (spread 0 → 1)
