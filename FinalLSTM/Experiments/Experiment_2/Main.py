@@ -42,15 +42,15 @@ def set_seed(seed: int):
 #   model_save_path : where the trained checkpoint is written
 #
 MODEL_CONFIGS = [
-    dict(
-        name            = "Baseline (UncertaintyDecoder)",
-        module_dir      = "Model_1",
-        dataset_path    = "Model_1/data/dataset.pt",
-        model_save_path = "Model_1/checkpoints/model.pt",
-        conformal_alpha = 0.10,   # targets ~90 % coverage
-        epochs          = 50,
-        patience        = 5,
-    ),
+    #dict(
+    #    name            = "Baseline (UncertaintyDecoder)",
+    #    module_dir      = "Model_1",
+    #    dataset_path    = "Model_1/data/dataset.pt",
+    #    model_save_path = "Model_1/checkpoints/model.pt",
+    #    conformal_alpha = 0.10,   # targets ~90 % coverage
+    #    epochs          = 50,
+    #    patience        = 5,
+    #),
     dict(
         name            = "Ablated (Direct Output Head)",
         module_dir      = "Model_2",

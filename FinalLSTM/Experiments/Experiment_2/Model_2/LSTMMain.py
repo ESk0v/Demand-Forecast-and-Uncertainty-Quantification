@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from LSTM.LSTMTraining import load_and_split_dataset, train_model
 from LSTM.GenerateREADME import generate_training_readme
 
-CONFORMAL_ALPHA = 0.50
+CONFORMAL_ALPHA = 0.90
 
 def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
     dataset_path    = filePaths[0]
