@@ -139,10 +139,10 @@ class LSTMForecast(nn.Module):
         decoder_output     = self.dropout(decoder_output)
         q50                = self.fc_decoderMedian(decoder_output).squeeze(-1)
 
-        # Force a deep copy so underlying memory pointers aren't shared
+        # Force a deep copy so underlying memory pointers aren't shared 
         # between the C++ LSTM backward routines
         spread_output, _ = self.uncertaintyDecoderLstm(
-            decoder_input,
+            decoder_input, 
             (hidden.clone().detach(), cell.clone().detach())
         )
         spread_output     = self.dropout(spread_output)
