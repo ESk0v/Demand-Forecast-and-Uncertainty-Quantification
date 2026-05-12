@@ -27,20 +27,20 @@ def set_seed(seed: int):
 
 MODEL_CONFIGS = [
     dict(
-        name = "Model_4 Decoupled",
-        module_dir = "Model_4_decoupled",
+        name = "Model_1 Decoupled - Detach",
+        module_dir ="Model_1_decoupled_detach",
         dataset_path = "data/dataset.pt",
-        model_save_path ="Model_4_decoupled/checkpoints/model_decoupled.pt",
+        model_save_path ="Model_1_decoupled_detach/checkpoints/model_decoupled.pt",
         conformal_alpha = 0.10,
         epochs = 50,
         patience = 20,
         training_variant = "decoupled",
     ),
     dict(
-        name = "Model_5 Coupled",
-        module_dir = "Model_5_coupled",
+        name = "Model_4 Coupled - 2 sub-losses",
+        module_dir ="Model_4_coupled_2subloss",
         dataset_path = "data/dataset.pt",
-        model_save_path ="Model_5_coupled/checkpoints/model_coupled.pt",
+        model_save_path ="Model_4_coupled_2subloss/checkpoints/model_coupled.pt",
         conformal_alpha = 0.10,
         epochs = 50,
         patience = 20,
