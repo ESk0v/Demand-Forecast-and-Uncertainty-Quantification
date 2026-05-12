@@ -26,26 +26,36 @@ def set_seed(seed: int):
     torch.backends.cudnn.benchmark     = False
 
 MODEL_CONFIGS = [
+    #dict(
+    #    name = "Model_1 Decoupled - Detach",
+    #    module_dir ="Model_1_decoupled_detach",
+    #    dataset_path = "data/dataset.pt",
+    #    model_save_path ="Model_1_decoupled_detach/checkpoints/model_decoupled.pt",
+    #    conformal_alpha = 0.10,
+    #    epochs = 50,
+    #    patience = 20,
+    #    training_variant = "decoupled",
+    #),
     dict(
-        name = "Model_1 Decoupled - Detach",
-        module_dir ="Model_1_decoupled_detach",
+        name = "Model_2 Decoupled - No Detach",
+        module_dir ="Model_2_decoupled",
         dataset_path = "data/dataset.pt",
-        model_save_path ="Model_1_decoupled_detach/checkpoints/model_decoupled.pt",
+        model_save_path ="Model_2_decoupled/checkpoints/model_decoupled.pt",
         conformal_alpha = 0.10,
         epochs = 50,
-        patience = 20,
+        patience = 10,
         training_variant = "decoupled",
     ),
-    dict(
-        name = "Model_4 Coupled - 2 sub-losses",
-        module_dir ="Model_4_coupled_2subloss",
-        dataset_path = "data/dataset.pt",
-        model_save_path ="Model_4_coupled_2subloss/checkpoints/model_coupled.pt",
-        conformal_alpha = 0.10,
-        epochs = 50,
-        patience = 20,
-        training_variant = "coupled",
-    ),
+    #dict(
+    #    name = "Model_4 Coupled - 2 sub-losses",
+    #    module_dir ="Model_4_coupled_2subloss",
+    #    dataset_path = "data/dataset.pt",
+    #    model_save_path ="Model_4_coupled_2subloss/checkpoints/model_coupled.pt",
+    #    conformal_alpha = 0.10,
+    #    epochs = 50,
+    #    patience = 20,
+    #    training_variant = "coupled",
+    #),
 ]
 
 
