@@ -26,36 +26,46 @@ def set_seed(seed: int):
     torch.backends.cudnn.benchmark     = False
 
 MODEL_CONFIGS = [
-    #dict(
-    #    name = "Model_1 Decoupled - Detach",
-    #    module_dir ="Model_1_decoupled_detach",
-    #    dataset_path = "data/dataset.pt",
-    #    model_save_path ="Model_1_decoupled_detach/checkpoints/model_decoupled.pt",
-    #    conformal_alpha = 0.10,
-    #    epochs = 50,
-    #    patience = 20,
-    #    training_variant = "decoupled",
-    #),
+    # dict(
+    #     name = "Model_1 Decoupled - Detach",
+    #     module_dir ="Model_1_decoupled_detach",
+    #     dataset_path = "data/dataset.pt",
+    #     model_save_path ="Model_1_decoupled_detach/checkpoints/model_decoupled.pt",
+    #     conformal_alpha = 0.10,
+    #     epochs = 50,
+    #     patience = 10,
+    #     training_variant = "decoupled",
+    # ),
+    # dict(
+    #     name = "Model_2 Decoupled - No Detach",
+    #     module_dir ="Model_2_decoupled",
+    #     dataset_path = "data/dataset.pt",
+    #     model_save_path ="Model_2_decoupled/checkpoints/model_decoupled.pt",
+    #     conformal_alpha = 0.10,
+    #     epochs = 50,
+    #     patience = 10,
+    #     training_variant = "decoupled",
+    # ),
     dict(
-        name = "Model_2 Decoupled - No Detach",
-        module_dir ="Model_2_decoupled",
+        name = "Model_3 Coupled - 2 loss functions",
+        module_dir ="Model_3_coupled_2loss",
         dataset_path = "data/dataset.pt",
-        model_save_path ="Model_2_decoupled/checkpoints/model_decoupled.pt",
+        model_save_path ="Model_3_coupled_2loss/checkpoints/model_coupled.pt",
         conformal_alpha = 0.10,
         epochs = 50,
         patience = 10,
-        training_variant = "decoupled",
+        training_variant = "coupled",
     ),
-    #dict(
-    #    name = "Model_4 Coupled - 2 sub-losses",
-    #    module_dir ="Model_4_coupled_2subloss",
-    #    dataset_path = "data/dataset.pt",
-    #    model_save_path ="Model_4_coupled_2subloss/checkpoints/model_coupled.pt",
-    #    conformal_alpha = 0.10,
-    #    epochs = 50,
-    #    patience = 20,
-    #    training_variant = "coupled",
-    #),
+    # dict(
+    #     name = "Model_4 Coupled - 2 sub-loss function",
+    #     module_dir ="Model_4_coupled_2subloss",
+    #     dataset_path = "data/dataset.pt",
+    #     model_save_path ="Model_4_coupled_2subloss/checkpoints/model_coupled.pt",
+    #     conformal_alpha = 0.10,
+    #     epochs = 50,
+    #     patience = 10,
+    #     training_variant = "coupled",
+    # ),
 ]
 
 
@@ -104,8 +114,8 @@ def train_one_model(cfg: dict):
     """
     import importlib
 
-    module_dir     = cfg["module_dir"]
-    main_dir       = os.path.abspath(os.path.dirname(__file__))
+    module_dir = cfg["module_dir"]
+    main_dir = os.path.abspath(os.path.dirname(__file__))
     abs_module_dir = os.path.abspath(os.path.join(main_dir, module_dir))
 
     if not os.path.isdir(abs_module_dir):
@@ -126,7 +136,7 @@ def train_one_model(cfg: dict):
             del sys.modules[mod_name]
 
     lstm_training = importlib.import_module("LSTMTraining")
-    lstm_model    = importlib.import_module("LSTMModel")
+    lstm_model = importlib.import_module("LSTMModel")
 
     load_and_split_dataset = lstm_training.load_and_split_dataset
     train_model            = lstm_training.train_model
