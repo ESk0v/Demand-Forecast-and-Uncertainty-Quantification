@@ -11,20 +11,46 @@ def main(local=False, filePaths=None, logger=None):
     encoder_history = 168
     forecast_length = 168
 
+    def _log(msg):
+        if logger is not None:
+            logger.info(msg)
+        else:
+            print(msg)
+
     df = pd.read_csv(csv_file, parse_dates=["dateTime"])
-    logger.info("Loaded dataset")
+    _log("Loaded dataset")
+
+    # Enforce chronological order and unique timestamps before feature logic.
+    n_before = len(df)
+    df = (
+        df.sort_values("dateTime")
+          .drop_duplicates(subset=["dateTime"], keep="first")
+          .reset_index(drop=True)
+    )
+    n_removed = n_before - len(df)
+    if n_removed > 0:
+        _log(f"Removed {n_removed} duplicate timestamp rows after sorting.")
+
+    # =====================================================
+    # Required base columns for this pipeline
+    # =====================================================
+    required_base_cols = ['abvaerk', 'toutdoor']
+    missing_base_cols = [c for c in required_base_cols if c not in df.columns]
+    if missing_base_cols:
+        raise ValueError(f"Missing required base columns in CSV: {missing_base_cols}")
 
     # =====================================================
     # Missing values
     # =====================================================
     df['abvaerk'] = df['abvaerk'].interpolate(method='linear').bfill().ffill()
+    df['toutdoor'] = df['toutdoor'].interpolate(method='linear').bfill().ffill()
 
-    forecast_features = [
-        'toutdoor', 'temperature', 'relativeHumidity',
-        'windSpeed', 'precipitation', 'cloudCover'
+    # Optional unsuffixed weather columns are supported for backwards compatibility.
+    # They are not required when using minimal synthetic CSV schema.
+    optional_observed_weather_cols = [
+        'temperature', 'relativeHumidity', 'windSpeed', 'precipitation', 'cloudCover'
     ]
-
-    for col in forecast_features:
+    for col in optional_observed_weather_cols:
         if col in df.columns:
             df[col] = df[col].interpolate(method='linear').bfill().ffill()
 
@@ -45,20 +71,38 @@ def main(local=False, filePaths=None, logger=None):
         cloud_cols
     ]
 
+    all_forecast_horizon_cols = [c for cols in forecast_cols_all for c in cols]
+    missing_forecast_cols = [c for c in all_forecast_horizon_cols if c not in df.columns]
+    if missing_forecast_cols:
+        preview = missing_forecast_cols[:10]
+        raise ValueError(
+            f"Missing required forecast horizon columns (showing up to 10): {preview} "
+            f"(total missing: {len(missing_forecast_cols)})"
+        )
+
+    for col in all_forecast_horizon_cols:
+        df[col] = df[col].interpolate(method='linear').bfill().ffill()
+
     # =====================================================
     # Split
     # =====================================================
-    val_ratio  = 0.25
-    test_ratio = 0.15
+    val_ratio  = 0.16666
+    test_ratio = 0.16666
 
-    n_total_windows = len(df) - encoder_history - forecast_length
+    n_total_windows = len(df) - encoder_history - forecast_length + 1
+    if n_total_windows <= 0:
+        raise ValueError(
+            f"Not enough rows ({len(df)}) for encoder_history={encoder_history} "
+            f"and forecast_length={forecast_length}. Need at least "
+            f"{encoder_history + forecast_length} rows."
+        )
     test_size  = int(n_total_windows * test_ratio)
     val_size   = int(n_total_windows * val_ratio)
     train_size = n_total_windows - val_size - test_size
 
     train_end = train_size
 
-    logger.info(f"Train={train_size}, Val={val_size}, Test={test_size}")
+    _log(f"Train={train_size}, Val={val_size}, Test={test_size}")
 
     # =====================================================
     # Normalisation (fit on train only)
@@ -83,12 +127,14 @@ def main(local=False, filePaths=None, logger=None):
     cloud_std  = df.iloc[:train_end][cloud_cols].values.std()
     df[cloud_cols] = (df[cloud_cols] - cloud_mean) / cloud_std
 
-    df[wind_cols] = np.log1p(df[wind_cols])
+    # Synthetic raw data may contain slight negative values from generation noise.
+    # Guard log1p against invalid values.
+    df[wind_cols] = np.log1p(df[wind_cols].clip(lower=0.0))
     wind_mean = df.iloc[:train_end][wind_cols].values.mean()
     wind_std  = df.iloc[:train_end][wind_cols].values.std()
     df[wind_cols] = (df[wind_cols] - wind_mean) / wind_std
 
-    df[precip_cols] = np.log1p(df[precip_cols])
+    df[precip_cols] = np.log1p(df[precip_cols].clip(lower=0.0))
     precip_mean = df.iloc[:train_end][precip_cols].values.mean()
     precip_std  = df.iloc[:train_end][precip_cols].values.std()
     df[precip_cols] = (df[precip_cols] - precip_mean) / precip_std
@@ -136,7 +182,7 @@ def main(local=False, filePaths=None, logger=None):
     decoder_data = []
     target_data  = []
 
-    logger.info("Building samples (NO NOISE)...")
+    _log("Building samples (NO NOISE)...")
 
     # =====================================================
     # BUILD DATASET
@@ -202,6 +248,6 @@ def main(local=False, filePaths=None, logger=None):
         "demand_std": demand_std
     }, output_path)
 
-    logger.info(f"Saved tensors: {encoder_tensor.shape}")
+    _log(f"Saved tensors: {encoder_tensor.shape}")
 
     return output_path
