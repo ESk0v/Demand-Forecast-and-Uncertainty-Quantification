@@ -69,20 +69,29 @@ MODEL_CONFIGS = [
         epochs          = 50,
         patience        = 5,
     ),
-    dict(
-        name            = "80% target",
-        module_dir      = "Model_4",
-        dataset_path    = "Model_4/data/dataset.pt",
-        model_save_path = "Model_4/checkpoints/model.pt",
-        conformal_alpha = 0.20,   # 1 - 0.80
-        epochs          = 50,
-        patience        = 5,
-    ),
+    #dict(
+    #    name            = "80% target",
+    #    module_dir      = "Model_4",
+    #    dataset_path    = "Model_4/data/dataset.pt",
+    #    model_save_path = "Model_4/checkpoints/model.pt",
+    #    conformal_alpha = 0.20,   # 1 - 0.80
+    #    epochs          = 50,
+    #    patience        = 5,
+    #),
+    #dict(
+    #    name            = "90% target",
+    #    module_dir      = "Model_5",
+    #    dataset_path    = "Model_5/data/dataset.pt",
+    #    model_save_path = "Model_5/checkpoints/model.pt",
+    #    conformal_alpha = 0.10,   # 1 - 0.90
+    #    epochs          = 50,
+    #    patience        = 5,
+    #),
     dict(
         name            = "90% target",
-        module_dir      = "Model_5",
-        dataset_path    = "Model_5/data/dataset.pt",
-        model_save_path = "Model_5/checkpoints/model.pt",
+        module_dir      = "Model_6",
+        dataset_path    = "Model_6/data/dataset.pt",
+        model_save_path = "Model_6/checkpoints/model.pt",
         conformal_alpha = 0.10,   # 1 - 0.90
         epochs          = 50,
         patience        = 5,

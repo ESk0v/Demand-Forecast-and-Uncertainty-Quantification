@@ -20,6 +20,13 @@ MODEL_2 = os.path.join(
     "model.pt"
 )
 
+MODEL_2 = os.path.join(
+    BASE_DIR,
+    "Model_3",
+    "checkpoints",
+    "model.pt"
+)
+
 SAVE_PATH = os.path.join(
     BASE_DIR,
     "detach_vs_no_detach.png"

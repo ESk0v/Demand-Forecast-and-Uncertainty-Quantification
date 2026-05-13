@@ -41,6 +41,38 @@ MODEL_CONFIGS = [
         conformal_alpha=0.10,
         base_color="#ff7f0e",
     ),
+    dict(
+        name="Model 6 Test",
+        module_dir="Experiment_3/Model_6",
+        dataset_path="Experiment_3/data/dataset.pt",
+        model_save_path="Experiment_3/Model_6/checkpoints/model.pt",
+        conformal_alpha=0.10,
+        base_color="#ff0eb7",
+    ),
+    dict(
+        name="Model 7 Test 2",
+        module_dir="Experiment_3/Model_7",
+        dataset_path="Experiment_3/data/dataset.pt",
+        model_save_path="Experiment_3/Model_7/checkpoints/model.pt",
+        conformal_alpha=0.10,
+        base_color="#ff0eb7",
+    ),
+    dict(
+        name="Model 8 Test 3",
+        module_dir="Experiment_3/Model_8",
+        dataset_path="Experiment_3/data/dataset.pt",
+        model_save_path="Experiment_3/Model_8/checkpoints/model.pt",
+        conformal_alpha=0.10,
+        base_color="#ff0eb7",
+    ),
+    dict(
+        name="Model 9 Test 3",
+        module_dir="Experiment_3/Model_9",
+        dataset_path="Experiment_3/data/dataset.pt",
+        model_save_path="Experiment_3/Model_9/checkpoints/model.pt",
+        conformal_alpha=0.10,
+        base_color="#ff0eb7",
+    ),
 ]
 
 

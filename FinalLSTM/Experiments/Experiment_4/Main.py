@@ -33,21 +33,30 @@ MODEL_CONFIGS = [
     #    epochs          = 50,
     #    patience        = 5,
     #),
+    #dict(
+    #    name            = "Projected Encoder",
+    #    module_dir      = "Model_2",
+    #    dataset_path    = "Model_2/data/dataset.pt",
+    #    model_save_path = "Model_2/checkpoints/model.pt",
+    #    conformal_alpha = 0.1,   # 1 - 0.60
+    #    epochs          = 50,
+    #    patience        = 5,
+    #),
+    #dict(
+    #    name            = "Only Hidden (Cell Proj)",
+    #    module_dir      = "Model_3",
+    #    dataset_path    = "Model_3/data/dataset.pt",
+    #    model_save_path = "Model_3/checkpoints/model.pt",
+    #    conformal_alpha = 0.1,   # 1 - 0.70
+    #    epochs          = 50,
+    #    patience        = 5,
+    #),
     dict(
-        name            = "Projected Encoder",
-        module_dir      = "Model_2",
-        dataset_path    = "Model_2/data/dataset.pt",
-        model_save_path = "Model_2/checkpoints/model.pt",
-        conformal_alpha = 0.1,   # 1 - 0.60
-        epochs          = 50,
-        patience        = 5,
-    ),
-    dict(
-        name            = "Only Hidden (Cell Proj)",
-        module_dir      = "Model_3",
-        dataset_path    = "Model_3/data/dataset.pt",
-        model_save_path = "Model_3/checkpoints/model.pt",
-        conformal_alpha = 0.1,   # 1 - 0.70
+        name            = "JUST A TEST",
+        module_dir      = "Model_6",
+        dataset_path    = "Model_6/data/dataset.pt",
+        model_save_path = "Model_6/checkpoints/model.pt",
+        conformal_alpha = 0.1,   # 1 - Conformal_Alpha (90%)
         epochs          = 50,
         patience        = 5,
     ),
