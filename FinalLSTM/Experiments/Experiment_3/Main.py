@@ -214,7 +214,7 @@ def train_one_model(cfg: dict):
         torch.cuda.empty_cache()
 
     training_variant = cfg.get("training_variant", "coupled")
-    logger.info(f"[{cfg['name']}] Starting training … (variant={training_variant})")
+    logger.info(f"[{cfg['name']}] Starting training - Variant={training_variant}")
 
     train_model_sig = inspect.signature(train_model)
     train_model_params = train_model_sig.parameters
