@@ -65,7 +65,6 @@ class LSTMForecast(nn.Module):
     def __init__(self, config: Config):
         super(LSTMForecast, self).__init__()
         self.config = config
-        self.training_variant = getattr(config, "training_variant", "decoupled")
 
         self.encoderLstm = nn.LSTM(
             input_size=config.encoder_features,
@@ -147,13 +146,9 @@ class LSTMForecast(nn.Module):
         decoder_output     = self.dropout(decoder_output)
         q50                = self.fc_decoderMedian(decoder_output).squeeze(-1)
 
-        if self.training_variant == "decoupled":
-            unc_seed_cell = cell.detach()
-        else:
-            unc_seed_cell = cell
-
         unc_hidden = torch.tanh(
-            self.uncertainty_cell_proj(unc_seed_cell)
+            # Model_1 is detach-only: no interval gradient back into encoder state.
+            self.uncertainty_cell_proj(cell.detach())
         )
 
         unc_cell = torch.zeros_like(unc_hidden)
@@ -169,12 +164,8 @@ class LSTMForecast(nn.Module):
             torch.linspace(0, 1, horizon_steps, device=decoder_input.device).unsqueeze(-1)
         )).squeeze(-1).unsqueeze(0)
 
-        if self.training_variant == "decoupled":
-            # Keep interval branch gradients off median/encoder path.
-            q50_anchor = q50.detach()
-        else:
-            q50_anchor = q50
-
+        # Model_1 is detach-only: q10/q90 are anchored on detached q50.
+        q50_anchor = q50.detach()
         q10 = q50_anchor - spread_lo * ramp
         q90 = q50_anchor + spread_hi * ramp
 

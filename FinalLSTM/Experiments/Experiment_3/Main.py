@@ -26,46 +26,56 @@ def set_seed(seed: int):
     torch.backends.cudnn.benchmark     = False
 
 MODEL_CONFIGS = [
-    # dict(
-    #     name = "Model_1 Decoupled - Detach",
-    #     module_dir ="Model_1_decoupled_detach",
-    #     dataset_path = "data/dataset.pt",
-    #     model_save_path ="Model_1_decoupled_detach/checkpoints/model_decoupled.pt",
-    #     conformal_alpha = 0.10,
-    #     epochs = 50,
-    #     patience = 10,
-    #     training_variant = "decoupled",
-    # ),
-    # dict(
-    #     name = "Model_2 Decoupled - No Detach",
-    #     module_dir ="Model_2_decoupled",
-    #     dataset_path = "data/dataset.pt",
-    #     model_save_path ="Model_2_decoupled/checkpoints/model_decoupled.pt",
-    #     conformal_alpha = 0.10,
-    #     epochs = 50,
-    #     patience = 10,
-    #     training_variant = "decoupled",
-    # ),
-    #dict(
-    #    name = "Model_3 Coupled - 2 loss functions",
-    #    module_dir ="Model_3_coupled_2loss",
-    #    dataset_path = "data/dataset.pt",
-    #    model_save_path ="Model_3_coupled_2loss/checkpoints/model_coupled.pt",
-    #    conformal_alpha = 0.10,
-    #    epochs = 50,
-    #    patience = 10,
-    #    training_variant = "coupled",
-    #),
-    # dict(
-    #     name = "Model_4 Coupled - 2 sub-loss function",
-    #     module_dir ="Model_4_coupled_2subloss",
-    #     dataset_path = "data/dataset.pt",
-    #     model_save_path ="Model_4_coupled_2subloss/checkpoints/model_coupled.pt",
-    #     conformal_alpha = 0.10,
-    #     epochs = 50,
-    #     patience = 10,
-    #     training_variant = "coupled",
-    # ),
+    dict(
+        name = "Model_1 Decoupled - Detach",
+        module_dir ="Model_1_decoupled_detach",
+        dataset_path = "data/dataset_syn3.pt",
+        model_save_path ="Model_1_decoupled_detach/synthetic_data_2/model_decoupled.pt",
+        conformal_alpha = 0.10,
+        epochs = 20,
+        patience = 10,
+        training_variant = "decoupled",
+    ),
+    dict(
+        name = "Model_2 Decoupled - No Detach",
+        module_dir ="Model_2_decoupled_no_detach",
+        dataset_path = "data/dataset_syn3.pt",
+        model_save_path ="Model_2_decoupled_no_detach/synthetic_data_2/model_decoupled.pt",
+        conformal_alpha = 0.10,
+        epochs = 20,
+        patience = 10,
+        training_variant = "decoupled",
+    ),
+    dict(
+       name = "Model_3 Coupled - 2 loss functions",
+       module_dir ="Model_3_coupled_2loss",
+       dataset_path = "data/dataset_syn3.pt",
+       model_save_path ="Model_3_coupled_2loss/synthetic_data_2/model_coupled.pt",
+       conformal_alpha = 0.10,
+       epochs = 20,
+       patience = 10,
+       training_variant = "coupled",
+    ),
+    dict(
+        name = "Model_4 Coupled - 2 sub-loss function",
+        module_dir ="Model_4_coupled_2subloss",
+        dataset_path = "data/dataset_syn3.pt",
+        model_save_path ="Model_4_coupled_2subloss/synthetic_data_2/model_coupled.pt",
+        conformal_alpha = 0.10,
+        epochs = 20,
+        patience = 10,
+        training_variant = "coupled",
+    ),
+    dict(
+         name = "Model_5 Coupled - 1 loss function",
+         module_dir ="Model_5_coupled_1loss",
+         dataset_path = "data/dataset_syn3.pt",
+         model_save_path ="Model_5_coupled_1loss/synthetic_data_2/model_coupled.pt",
+         conformal_alpha = 0.10,
+         epochs = 20,
+         patience = 10,
+         training_variant = "coupled",
+     ),
     #dict(
     #    name = "Model 7, no ramp",
     #    module_dir ="Model_7",
@@ -86,16 +96,16 @@ MODEL_CONFIGS = [
     #    patience = 5,
     #    training_variant = "coupled",
     #),
-    dict(
-        name = "Model 9, Fix early horizon HARDER",
-        module_dir ="Model_9",
-        dataset_path = "data/dataset.pt",
-        model_save_path ="Model_9/checkpoints/model.pt",
-        conformal_alpha = 0.10,
-        epochs = 50,
-        patience = 5,
-        training_variant = "coupled",
-    ),
+    # dict(
+    #     name = "Model 9, Fix early horizon HARDER",
+    #     module_dir ="Model_9",
+    #     dataset_path = "data/dataset.pt",
+    #     model_save_path ="Model_9/checkpoints/model.pt",
+    #     conformal_alpha = 0.10,
+    #     epochs = 50,
+    #     patience = 5,
+    #     training_variant = "coupled",
+    # ),
 ]
 
 
@@ -180,7 +190,7 @@ def train_one_model(cfg: dict):
     if not os.path.isfile(dataset_path):
         raise FileNotFoundError(
             f"Dataset not found: {dataset_path}\n"
-            f"Place your dataset.pt inside {os.path.join(abs_module_dir, 'data')}"
+            f"Place your dataset_syn1.pt inside {os.path.join(abs_module_dir, 'data')}"
         )
 
     (train_dataset, val_dataset, cal_dataset, test_dataset,
@@ -217,29 +227,42 @@ def train_one_model(cfg: dict):
     logger.info(f"[{cfg['name']}] Starting training - Variant={training_variant}")
 
     train_model_sig = inspect.signature(train_model)
-    train_model_params = train_model_sig.parameters
+    param_defs = train_model_sig.parameters
 
-    train_args = [config, train_loader, val_loader, cal_loader]
-    if "test_loader" in train_model_params:
-        train_args.append(test_loader)
-    train_args.extend([train_size, val_size, cal_size])
-    if "test_size" in train_model_params:
-        train_args.append(test_size)
-    train_args.append(model_save_path)
-
-    train_kwargs = {
+    available_args = {
+        "config": config,
+        "train_loader": train_loader,
+        "val_loader": val_loader,
+        "cal_loader": cal_loader,
+        "test_loader": test_loader,
+        "train_size": train_size,
+        "val_size": val_size,
+        "cal_size": cal_size,
+        "test_size": test_size,
+        "model_save_path": model_save_path,
+        "dataset_path": dataset_path,
         "logger": logger,
         "patience": cfg["patience"],
         "conformal_alpha": cfg["conformal_alpha"],
+        "training_variant": training_variant,
+        "model_name": cfg["name"],
     }
-    if "training_variant" in train_model_params:
-        train_kwargs["training_variant"] = training_variant
-    if "dataset_path" in train_model_params:
-        train_kwargs["dataset_path"] = dataset_path
-    if "model_name" in train_model_params:
-        train_kwargs["model_name"] = cfg["name"]
 
-    train_model(*train_args, **train_kwargs)
+    train_call_kwargs = {}
+    missing_required = []
+    for name, param in param_defs.items():
+        if name in available_args:
+            train_call_kwargs[name] = available_args[name]
+        elif param.default is inspect._empty:
+            missing_required.append(name)
+
+    if missing_required:
+        raise TypeError(
+            f"{cfg['name']} train_model is missing required args: {missing_required}. "
+            f"Signature: {train_model_sig}"
+        )
+
+    train_model(**train_call_kwargs)
 
     logger.success(f"[{cfg['name']}] Checkpoint saved → {model_save_path}")
 
