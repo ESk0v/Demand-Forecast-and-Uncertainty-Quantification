@@ -2,7 +2,7 @@
 CoveragePlot/main.py
 ────────────────────
 Trains N models (each with its own conformal alpha / coverage target)
-and saves checkpoints. Run Plot.py separately to generate the plot.
+and saves synthetic_data_1. Run Plot.py separately to generate the plot.
 """
 
 import os
@@ -28,7 +28,7 @@ MODEL_CONFIGS = [
     #    name            = "Full Encoder",
     #    module_dir      = "Model_1",
     #    dataset_path    = "Model_1/data/dataset.pt",
-    #    model_save_path = "Model_1/checkpoints/model.pt",
+    #    model_save_path = "Model_1/synthetic_data_1/model.pt",
     #    conformal_alpha = 0.1,   # 1 - 0.50
     #    epochs          = 50,
     #    patience        = 5,
@@ -37,7 +37,7 @@ MODEL_CONFIGS = [
     #    name            = "Projected Encoder",
     #    module_dir      = "Model_2",
     #    dataset_path    = "Model_2/data/dataset.pt",
-    #    model_save_path = "Model_2/checkpoints/model.pt",
+    #    model_save_path = "Model_2/synthetic_data_1/model.pt",
     #    conformal_alpha = 0.1,   # 1 - 0.60
     #    epochs          = 50,
     #    patience        = 5,
@@ -46,7 +46,7 @@ MODEL_CONFIGS = [
     #    name            = "Only Hidden (Cell Proj)",
     #    module_dir      = "Model_3",
     #    dataset_path    = "Model_3/data/dataset.pt",
-    #    model_save_path = "Model_3/checkpoints/model.pt",
+    #    model_save_path = "Model_3/synthetic_data_1/model.pt",
     #    conformal_alpha = 0.1,   # 1 - 0.70
     #    epochs          = 50,
     #    patience        = 5,

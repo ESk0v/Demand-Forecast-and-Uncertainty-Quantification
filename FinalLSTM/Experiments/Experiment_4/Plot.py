@@ -1,7 +1,7 @@
 """
 Plot.py
 ───────
-Loads pre-trained model checkpoints (NO re-training) and generates a
+Loads pre-trained model synthetic_data_1 (NO re-training) and generates a
 clean reliability diagram with box plots.
 
 Reliability diagram:
@@ -16,7 +16,7 @@ Reliability diagram:
 Usage:
     python Plot.py
 
-Configure MODEL_CONFIGS below to point at your checkpoints.
+Configure MODEL_CONFIGS below to point at your synthetic_data_1.
 """
 
 import os
@@ -73,7 +73,7 @@ MODEL_CONFIGS = [
     #    name            = "80% target",
     #    module_dir      = "Model_4",
     #    dataset_path    = "Model_4/data/dataset.pt",
-    #    model_save_path = "Model_4/checkpoints/model.pt",
+    #    model_save_path = "Model_4/synthetic_data_1/model.pt",
     #    conformal_alpha = 0.20,   # 1 - 0.80
     #    epochs          = 50,
     #    patience        = 5,
@@ -82,7 +82,7 @@ MODEL_CONFIGS = [
     #    name            = "90% target",
     #    module_dir      = "Model_5",
     #    dataset_path    = "Model_5/data/dataset.pt",
-    #    model_save_path = "Model_5/checkpoints/model.pt",
+    #    model_save_path = "Model_5/synthetic_data_1/model.pt",
     #    conformal_alpha = 0.10,   # 1 - 0.90
     #    epochs          = 50,
     #    patience        = 5,
@@ -398,7 +398,7 @@ def main():
         result = load_model_predictions(cfg)
         results.append(result)
 
-    print("\n[INFO] All checkpoints loaded. Generating reliability diagram …")
+    print("\n[INFO] All synthetic_data_1 loaded. Generating reliability diagram …")
     plot_reliability(results, OUTPUT_PLOT_PATH)
     print(f"[DONE] {os.path.abspath(OUTPUT_PLOT_PATH)}")
 
