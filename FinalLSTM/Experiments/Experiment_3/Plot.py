@@ -18,6 +18,10 @@ DEFAULT_MODEL_SPECS = [
     {"module_dir": "Model_3_coupled_2loss", "model_name": "Model_3 Coupled - 2 loss functions"},
     {"module_dir": "Model_4_coupled_2subloss", "model_name": "Model_4 Coupled - 2 sub-loss function"},
     {"module_dir": "Model_5_coupled_1loss", "model_name": "Model_5 Coupled - 1 pinball loss"},
+    # {"module_dir": "Model_6", "model_name": "Model_6 Sequence - Sigmoid"},
+    {"module_dir": "Model_7", "model_name": "Model_7 Sequence - No Sigmoid"},
+    {"module_dir": "Model_8", "model_name": "Model_8 Sequence - Asymmetric Penalty (1.5 - 0.5)"},
+    {"module_dir": "Model_9", "model_name": "Model_9 Sequence - Asymmetric Penalty (2.0 - 0.5)"},
 ]
 
 CHECKPOINT_CANDIDATES = (
@@ -216,7 +220,7 @@ def plot_cosine_and_coverage(
     nominal = (1 - alpha) * 100
 
     mae_q50 = float(np.mean(np.abs(q50 - targets)))
-    general_coverage = float(np.mean((targets >= q10_cal) & (targets <= q90_cal)) * 100)
+    general_coverage = float(np.mean((targets >= q10) & (targets <= q90)) * 100)
 
     fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=False)
     ax_cos, ax_cov = axes
@@ -255,7 +259,7 @@ def plot_cosine_and_coverage(
     )
     ax_cov.set_xlabel("Forecast Horizon (hours)")
     ax_cov.set_ylabel("Coverage (%)")
-    ax_cov.set_ylim(80, 100)
+    ax_cov.set_ylim(50, 100)
     ax_cov.set_title(f"{model_name} - Coverage Per Horizon")
     ax_cov.grid(True, alpha=0.3)
 
@@ -569,7 +573,7 @@ def parse_args():
     )
     parser.add_argument(
         "--run-subdir",
-        default="synthetic_data_3",
+        default="original",
         help="Run subfolder inside each model dir used to locate synthetic_data_1.",
     )
     parser.add_argument(
