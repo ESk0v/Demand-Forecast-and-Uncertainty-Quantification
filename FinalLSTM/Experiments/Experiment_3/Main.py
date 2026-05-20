@@ -76,16 +76,16 @@ MODEL_CONFIGS = [
     #      patience = 10,
     #      training_variant = "coupled",
     #  ),
-    dict(
-         name = "Model_6 Sequence - Ramp",
-         module_dir = "Model_6",
-         dataset_path = "data/dataset.pt",
-         model_save_path = "Model_6/original/model.pt",
-         conformal_alpha = 0.10,
-         epochs = 20,
-         patience = 10,
-         training_variant = "decoupled",
-     ),
+    #dict(
+    #     name = "Model_6 Sequence - Ramp",
+    #     module_dir = "Model_6",
+    #     dataset_path = "data/dataset.pt",
+    #     model_save_path = "Model_6/original/model.pt",
+    #     conformal_alpha = 0.10,
+    #     epochs = 20,
+    #     patience = 10,
+    #     training_variant = "decoupled",
+    # ),
     # dict(
     #    name = "Model 7, no ramp",
     #    module_dir = "Model_7",
@@ -116,6 +116,16 @@ MODEL_CONFIGS = [
     #     patience = 5,
     #     training_variant = "decoupled",
     # ),
+    dict(
+        name = "Model_10",
+        module_dir ="Model_10",
+        dataset_path = "data/dataset.pt",
+        model_save_path = "Model_10/original/model.pt",
+        conformal_alpha = 0.10,
+        epochs = 20,
+        patience = 10,
+        training_variant = "decoupled",
+    ),
 ]
 
 
