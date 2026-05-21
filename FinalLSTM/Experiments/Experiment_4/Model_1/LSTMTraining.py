@@ -266,9 +266,17 @@ def plot_coverage_per_horizon(q10, q90, targets, u_alpha_t, save_path, alpha=0.1
     raw_coverage = np.mean((targets >= q10) & (targets <= q90), axis=0)
     cal_coverage = np.mean((targets >= q10_cal) & (targets <= q90_cal), axis=0)
 
+    raw_mean = raw_coverage.mean() * 100
+    raw_mad = np.mean(np.abs(raw_coverage - (1 - alpha))) * 100
+
     fig, ax = plt.subplots(figsize=(12, 5))
     horizons = np.arange(1, len(raw_coverage) + 1)
-    ax.plot(horizons, raw_coverage * 100, label="Raw interval coverage",            color='steelblue')
+    ax.plot(
+        horizons,
+        raw_coverage * 100,
+        label=f"Raw interval coverage (mean={raw_mean:.2f}%, MAD={raw_mad:.2f}%)",
+        color='steelblue'
+    )
     ax.plot(horizons, cal_coverage * 100, label="Per-horizon calibrated coverage",  color='green')
     ax.axhline(y=(1 - alpha) * 100, color='orange', linestyle='--',
                label=f'Nominal {(1 - alpha) * 100:.0f}% target')

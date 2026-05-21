@@ -2,7 +2,7 @@
 CoveragePlot/main.py
 ────────────────────
 Trains N models (each with its own conformal alpha / coverage target)
-and saves synthetic_data_1. Run Plot.py separately to generate the plot.
+and saves original. Run Plot.py separately to generate the plot.
 """
 
 import os
@@ -24,42 +24,42 @@ def set_seed(seed: int):
     torch.backends.cudnn.benchmark     = False
 
 MODEL_CONFIGS = [
-    #dict(
-    #    name            = "Full Encoder",
-    #    module_dir      = "Model_1",
-    #    dataset_path    = "Model_1/data/dataset.pt",
-    #    model_save_path = "Model_1/synthetic_data_1/model.pt",
-    #    conformal_alpha = 0.1,   # 1 - 0.50
-    #    epochs          = 50,
-    #    patience        = 5,
-    #),
-    #dict(
-    #    name            = "Projected Encoder",
-    #    module_dir      = "Model_2",
-    #    dataset_path    = "Model_2/data/dataset.pt",
-    #    model_save_path = "Model_2/synthetic_data_1/model.pt",
-    #    conformal_alpha = 0.1,   # 1 - 0.60
-    #    epochs          = 50,
-    #    patience        = 5,
-    #),
-    #dict(
-    #    name            = "Only Hidden (Cell Proj)",
-    #    module_dir      = "Model_3",
-    #    dataset_path    = "Model_3/data/dataset.pt",
-    #    model_save_path = "Model_3/synthetic_data_1/model.pt",
-    #    conformal_alpha = 0.1,   # 1 - 0.70
-    #    epochs          = 50,
-    #    patience        = 5,
-    #),
     dict(
-        name            = "JUST A TEST",
-        module_dir      = "Model_6",
-        dataset_path    = "Model_6/data/dataset.pt",
-        model_save_path = "Model_6/checkpoints/model.pt",
-        conformal_alpha = 0.1,   # 1 - Conformal_Alpha (90%)
-        epochs          = 50,
-        patience        = 5,
+       name            = "Full Encoder",
+       module_dir      = "Model_1",
+       dataset_path    = "data/dataset.pt",
+       model_save_path = "Model_1/original/model.pt",
+       conformal_alpha = 0.1,
+       epochs          = 20,
+       patience        = 10,
     ),
+    dict(
+       name            = "Projected Encoder",
+       module_dir      = "Model_2",
+       dataset_path    = "data/dataset.pt",
+       model_save_path = "Model_2/original/model.pt",
+       conformal_alpha = 0.1,
+       epochs          = 20,
+       patience        = 10,
+    ),
+    dict(
+       name            = "Only Hidden (Cell Proj)",
+       module_dir      = "Model_3",
+       dataset_path    = "data/dataset.pt",
+       model_save_path = "Model_3/original/model.pt",
+       conformal_alpha = 0.1,
+       epochs          = 20,
+       patience        = 10,
+    ),
+    # dict(
+    #     name            = "JUST A TEST",
+    #     module_dir      = "Model_6",
+    #     dataset_path    = "data/dataset.pt",
+    #     model_save_path = "Model_6/original/model.pt",
+    #     conformal_alpha = 0.1,   # 1 - Conformal_Alpha (90%)
+    #     epochs          = 50,
+    #     patience        = 5,
+    # ),
 ]
 
 
