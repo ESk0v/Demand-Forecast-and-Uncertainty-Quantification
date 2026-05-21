@@ -70,54 +70,66 @@ MODEL_CONFIGS = [
         conformal_alpha=0.10,
         color="#9467bd",
     ),
-    dict(
-        name="Model 6 Sequence - Sigmoid",
-        module_dir="Model_6",
-        checkpoint_files={
-            "original": "model.pt",
-            "syn1": "model.pt",
-            "syn2": "model.pt",
-            "syn3": "model.pt",
-        },
-        conformal_alpha=0.10,
-        color="#8c564b",
-    ),
-    dict(
-        name="Model 7 Sequence - No Sigmoid",
-        module_dir="Model_7",
-        checkpoint_files={
-            "original": "model.pt",
-            "syn1": "model.pt",
-            "syn2": "model.pt",
-            "syn3": "model.pt",
-        },
-        conformal_alpha=0.10,
-        color="#e377c2",
-    ),
-    dict(
-        name="Model 8 Sequence - Asymmetric Penalty (1.5 - 0.5)",
-        module_dir="Model_8",
-        checkpoint_files={
-            "original": "model.pt",
-            "syn1": "model.pt",
-            "syn2": "model.pt",
-            "syn3": "model.pt",
-        },
-        conformal_alpha=0.10,
-        color="#7f7f7f",
-    ),
-    dict(
-        name="Model 9 Sequence - Asymmetric Penalty (2.0 - 0.5)",
-        module_dir="Model_9",
-        checkpoint_files={
-            "original": "model.pt",
-            "syn1": "model.pt",
-            "syn2": "model.pt",
-            "syn3": "model.pt",
-        },
-        conformal_alpha=0.10,
-        color="#bcbd22",
-    ),
+    # dict(
+    #     name="Model 6 Sequence - Sigmoid",
+    #     module_dir="Model_6",
+    #     checkpoint_files={
+    #         "original": "model.pt",
+    #         "syn1": "model.pt",
+    #         "syn2": "model.pt",
+    #         "syn3": "model.pt",
+    #     },
+    #     conformal_alpha=0.10,
+    #     color="#8c564b",
+    # ),
+    # dict(
+    #     name="Model 7 Sequence - No Sigmoid",
+    #     module_dir="Model_7",
+    #     checkpoint_files={
+    #         "original": "model.pt",
+    #         "syn1": "model.pt",
+    #         "syn2": "model.pt",
+    #         "syn3": "model.pt",
+    #     },
+    #     conformal_alpha=0.10,
+    #     color="#e377c2",
+    # ),
+    # dict(
+    #     name="Model 8 Sequence - Asymmetric (1.5 - 0.5)",
+    #     module_dir="Model_8",
+    #     checkpoint_files={
+    #         "original": "model.pt",
+    #         "syn1": "model.pt",
+    #         "syn2": "model.pt",
+    #         "syn3": "model.pt",
+    #     },
+    #     conformal_alpha=0.10,
+    #     color="#7f7f7f",
+    # ),
+    # dict(
+    #     name="Model 9 Sequence - Asymmetric (2.0 - 0.5)",
+    #     module_dir="Model_9",
+    #     checkpoint_files={
+    #         "original": "model.pt",
+    #         "syn1": "model.pt",
+    #         "syn2": "model.pt",
+    #         "syn3": "model.pt",
+    #     },
+    #     conformal_alpha=0.10,
+    #     color="#bcbd22",
+    # ),
+    # dict(
+    #     name="Model 10 Decoupled - No Detach + 2 Layers",
+    #     module_dir="Model_10",
+    #     checkpoint_files={
+    #         "original": "model.pt",
+    #         "syn1": "model_decoupled.pt",
+    #         "syn2": "model_decoupled.pt",
+    #         "syn3": "model_decoupled.pt",
+    #     },
+    #     conformal_alpha=0.10,
+    #     color="#17becf",
+    # ),
 ]
 
 DATASET_SPECS = {
@@ -161,11 +173,12 @@ DATASET_SPECS = {
 
 METRIC_SPECS = [
     ("mae", "MAE", "MAE"),
-    ("coverage_abs_dev_mean", "Coverage abs dev mean", "CoverageMAD"),
-    ("cosine_over_target", "Cosine over target", "CosineΔ"),
+    ("winkler_mean", "Mean Winkler Score", "Winkler"),
+    ("coverage_abs_dev_mean", "Coverage MAD", "CoverageMAD"),
+    ("cosine_over_target", "Gradient Cosine", "CosineΔ"),
 ]
 
-METRIC_HATCHES = ["", "//", "xx"]
+METRIC_HATCHES = ["", "\\\\", "//", "xx"]
 
 
 def _abs(path_from_this_file: str) -> str:
@@ -254,6 +267,21 @@ def _predict_test(model, test_loader):
     )
 
 
+def _mean_winkler_score(q_low, q_high, target, alpha):
+    q_low = np.asarray(q_low, dtype=np.float64)
+    q_high = np.asarray(q_high, dtype=np.float64)
+    target = np.asarray(target, dtype=np.float64)
+
+    # Guard against crossed intervals.
+    lo = np.minimum(q_low, q_high)
+    hi = np.maximum(q_low, q_high)
+
+    width = hi - lo
+    penalty_low = (2.0 / alpha) * np.clip(lo - target, a_min=0.0, a_max=None)
+    penalty_high = (2.0 / alpha) * np.clip(target - hi, a_min=0.0, a_max=None)
+    return float(np.mean(width + penalty_low + penalty_high))
+
+
 def _compute_metrics(cfg: dict, dataset_key: str):
     ckpt_path = _checkpoint_path_for(cfg, dataset_key)
     if not os.path.exists(ckpt_path):
@@ -283,8 +311,16 @@ def _compute_metrics(cfg: dict, dataset_key: str):
     demand_std = float(dataset_raw.get("demand_std", 1.0))
 
     q50_h = q50 * demand_std + demand_mean
+    q10_h = q10 * demand_std + demand_mean
+    q90_h = q90 * demand_std + demand_mean
     tgt_h = tgt * demand_std + demand_mean
     mae = float(np.mean(np.abs(q50_h - tgt_h)))
+    winkler_mean = _mean_winkler_score(
+        q_low=q10_h,
+        q_high=q90_h,
+        target=tgt_h,
+        alpha=float(cfg["conformal_alpha"]),
+    )
 
     target_coverage = float((1.0 - cfg["conformal_alpha"]) * 100.0)
     coverage_per_h = np.mean((tgt >= q10) & (tgt <= q90), axis=0) * 100.0
@@ -302,6 +338,7 @@ def _compute_metrics(cfg: dict, dataset_key: str):
         name=cfg["name"],
         color=cfg["color"],
         mae=mae,
+        winkler_mean=winkler_mean,
         coverage_abs_dev_mean=coverage_abs_dev_mean,
         cosine_over_target=cosine_over_target,
         observed_cosine=observed_cosine,
@@ -309,12 +346,12 @@ def _compute_metrics(cfg: dict, dataset_key: str):
     )
 
 
-def plot_model_comparison(results: list[dict], save_path: str, title_suffix: str):
+def plot_model_comparison(results: list[dict], save_path: str):
     names = [r["name"] for r in results]
     n_models = len(names)
     n_metrics = len(METRIC_SPECS)
     x = np.arange(n_models)
-    width = 0.22
+    width = 0.18
     offsets = (np.arange(n_metrics) - (n_metrics - 1) / 2.0) * width
 
     all_values = []
@@ -330,16 +367,17 @@ def plot_model_comparison(results: list[dict], save_path: str, title_suffix: str
         y_min = raw_min - 0.15 * span
     y_max = raw_max + 0.15 * span
 
-    fig, ax = plt.subplots(figsize=(20, 9))
+    fig, ax = plt.subplots(figsize=(12, 8))
     fig.patch.set_facecolor("#fbfbfd")
     ax.set_facecolor("#fbfbfd")
 
     label_base_offset = 0.015 * (y_max - y_min)
-    label_stagger = 0.025 * (y_max - y_min)
 
+    # Set bars and labels
     for i, (key, _, short_label) in enumerate(METRIC_SPECS):
         values = [r[key] for r in results]
         bar_colors = [r["color"] for r in results]
+        x_shift = (-1 if i < 2 else 1) * (0.14 * width)
         bars = ax.bar(
             x + offsets[i],
             values,
@@ -351,54 +389,47 @@ def plot_model_comparison(results: list[dict], save_path: str, title_suffix: str
             hatch=METRIC_HATCHES[i],
         )
 
-        # Solution 1: staggered external labels (always visible, including zeros).
-        for bar in bars:
-            v = bar.get_height()
-            tx = bar.get_x() + bar.get_width() / 2.0
-            if v >= 0:
-                ty = v + label_base_offset + i * label_stagger
-                va = "bottom"
-            else:
-                ty = v - label_base_offset - i * label_stagger
-                va = "top"
-            ax.text(
-                tx,
-                ty,
-                f"{v:.2f}",
-                ha="center",
-                va=va,
-                fontsize=8,
-                fontweight="bold",
-                color="#2b2b2b",
-                bbox=dict(
-                    boxstyle="round,pad=0.18",
-                    facecolor="white",
-                    alpha=0.88,
-                    edgecolor="none",
-                ),
-            )
+        # # Constant external label offset (always visible, including zeros).
+        # for bar in bars:
+        #     v = bar.get_height()
+        #     tx = bar.get_x() + bar.get_width() / 2.0 + x_shift
+        #     if v >= 0:
+        #         ty = v + label_base_offset
+        #         va = "bottom"
+        #     else:
+        #         ty = v - label_base_offset
+        #         va = "top"
+        #     ax.text(
+        #         tx,
+        #         ty,
+        #         f"{v:.2f}",
+        #         ha="center",
+        #         va=va,
+        #         fontsize=14,
+        #         fontweight="bold",
+        #         color="#2b2b2b",
+        #     )
 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_color("#6f6f6f")
     ax.spines["bottom"].set_color("#6f6f6f")
-    ax.set_xticks(x)
-    ax.set_xticklabels(names, rotation=12, ha="right")
+    ax.set_xticks([])
+    # ax.set_xticklabels(names, rotation=12, ha="right")
     ax.set_ylabel("Metric value")
-    ax.set_title(f"Experiment 3 Model Comparison - {title_suffix}")
+    ax.set_title(f"Model Architecture Comparison", fontsize=20)
     ax.set_ylim(y_min, y_max)
     ax.grid(True, axis="y", alpha=0.25, linestyle="--", linewidth=0.8)
     ax.set_axisbelow(True)
 
-    # Model legend inside plot (top-left), as requested.
     model_handles = [Patch(color=r["color"], label=r["name"]) for r in results]
     legend_models = ax.legend(
         handles=model_handles,
         title="Models",
         loc="upper left",
         frameon=True,
-        fontsize=8,
-        title_fontsize=9,
+        fontsize=16,
+        title_fontsize=18,
     )
     legend_models.get_frame().set_alpha(0.92)
     ax.add_artist(legend_models)
@@ -407,13 +438,18 @@ def plot_model_comparison(results: list[dict], save_path: str, title_suffix: str
         Patch(facecolor="white", edgecolor="#2f2f2f", hatch=METRIC_HATCHES[i], label=label)
         for i, (_, label, _) in enumerate(METRIC_SPECS)
     ]
+
+    x_min, x_max = ax.get_xlim()
+    x_span = max(x_max - x_min, 1e-9)
+    legend_shift_axes = (4.0 * width) / x_span
     legend_metrics = ax.legend(
         handles=metric_handles,
         title="Metrics",
         loc="upper right",
+        bbox_to_anchor=(1.0 - legend_shift_axes, 1.0),
         frameon=True,
-        fontsize=8,
-        title_fontsize=9,
+        fontsize=16,
+        title_fontsize=18,
     )
     legend_metrics.get_frame().set_alpha(0.92)
 
@@ -456,13 +492,14 @@ def main():
 
         save_name = f"compare_plots/modelComparePlot_{dataset_key}.png"
         save_path = _abs(save_name)
-        plot_model_comparison(results, save_path, dataset_title)
+        plot_model_comparison(results, save_path)
 
         print("[INFO] Included models:")
         for r in results:
             print(
                 f"  - {r['name']}: "
                 f"MAE={r['mae']:.4f}, "
+                f"Winkler={r['winkler_mean']:.4f}, "
                 f"CoverageMAD={r['coverage_abs_dev_mean']:.4f}, "
                 f"CosineΔ={r['cosine_over_target']:.4f} "
                 f"(obs={r['observed_cosine']:.4f}, target={r['target_cosine']:.4f})"

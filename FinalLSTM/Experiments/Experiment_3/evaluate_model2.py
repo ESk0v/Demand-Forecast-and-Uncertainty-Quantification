@@ -86,6 +86,22 @@ def load_splits(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
     )
 
 
+def split_settings_for_dataset(dataset_path):
+    """
+    Match split logic used in modelComparePlot.py:
+      - dataset.pt      : val/cal/test = 0.1 / 0.1 / 0.1 (val/cal overlap)
+      - synthetic sets  : val/cal/test = 1/12 / 1/12 / 1/6 (val/cal overlap)
+    """
+    name = os.path.basename(dataset_path)
+    if name == "dataset.pt":
+        return 0.10, 0.10, 0.10
+    if name in {"dataset_syn1.pt", "dataset_syn2.pt", "dataset_syn3.pt"}:
+        return 1 / 12, 1 / 12, 1 / 6
+
+    # Fallback keeps previous default behavior.
+    return 1 / 12, 1 / 12, 1 / 6
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Model loading & inference
 # ──────────────────────────────────────────────────────────────────────────────
@@ -408,7 +424,7 @@ def plot_test_predictions(q10, q50, q90, targets, save_path, model_name):
 # ──────────────────────────────────────────────────────────────────────────────
 # Console report
 # ──────────────────────────────────────────────────────────────────────────────
-def print_metrics(q50_h, tgt_h, persist_h, q10_cal_h, q90_cal_h, alpha,
+def print_metrics(q50_h, tgt_h, persist_h, q10_eval_h, q90_eval_h, alpha,
                   cov_min, cov_max, model_name):
     sep = "─" * 70
     print(f"\n{sep}")
@@ -427,19 +443,19 @@ def print_metrics(q50_h, tgt_h, persist_h, q10_cal_h, q90_cal_h, alpha,
               f"{rmse(a, b):>12.4f}  {mae(a, b):>12.4f}  {r2(a, b):>10.4f}")
 
     # ── Interval stats ────────────────────────────────────────────────────────
-    avg_w, norm_w = interval_stats(q10_cal_h, q90_cal_h, tgt_h)
+    avg_w, norm_w = interval_stats(q10_eval_h, q90_eval_h, tgt_h)
     avg_pred      = float(np.mean(q50_h))
-    print(f"\n[2] Interval statistics (calibrated, full test set)")
+    print(f"\n[2] Interval statistics (raw / uncalibrated, full test set)")
     print(f"    Average interval width (q90-q10) : {avg_w:.4f}")
     print(f"    Average prediction value (q50)   : {avg_pred:.4f}")
     print(f"    Normalized interval width         : {norm_w:.4f}  "
           f"(width / |avg target|)")
 
     # ── Winkler score ─────────────────────────────────────────────────────────
-    W        = winkler_score(q10_cal_h, q90_cal_h, tgt_h, alpha=alpha)
+    W        = winkler_score(q10_eval_h, q90_eval_h, tgt_h, alpha=alpha)
     avg_W    = float(np.mean(W))
     per_h_W  = np.mean(W, axis=0)
-    print(f"\n[3] Winkler score  (α={alpha},  calibrated intervals)")
+    print(f"\n[3] Winkler score  (α={alpha},  raw / uncalibrated intervals)")
     print(f"    Overall mean Winkler score        : {avg_W:.4f}")
     print(f"    Per key horizon:")
     for h_step, h_lbl in EVAL_HORIZONS.items():
@@ -483,10 +499,21 @@ def main():
 
     model, config, ckpt = load_model(MODULE_DIR, checkpoint_path, device)
 
+    val_ratio, cal_ratio, test_ratio = split_settings_for_dataset(dataset_path)
+    print(
+        f"Split ratios (matching modelComparePlot): "
+        f"val={val_ratio:.6f}, cal={cal_ratio:.6f}, test={test_ratio:.6f}"
+    )
+
     (
         _train_ds, _val_ds, cal_ds, test_ds,
         train_size, val_size, cal_size, test_size,
-    ) = load_splits(dataset_path)
+    ) = load_splits(
+        dataset_path,
+        val_ratio=val_ratio,
+        cal_ratio=cal_ratio,
+        test_ratio=test_ratio,
+    )
 
     def _loader(ds):
         return DataLoader(
@@ -521,8 +548,9 @@ def main():
 
     def dn(x): return x * d_std + d_mean
 
-    q10_h    = dn(q10_cf);    q50_h  = dn(q50_raw)
-    q90_h    = dn(q90_cf);    tgt_h  = dn(tgt_raw)
+    q10_h    = dn(q10_cf);      q50_h    = dn(q50_raw)
+    q90_h    = dn(q90_cf);      tgt_h    = dn(tgt_raw)
+    q10_raw_h = dn(q10_raw);    q90_raw_h = dn(q90_raw)
     q10_c_h  = dn(q10_cal_raw); q90_c_h = dn(q90_cal_raw)
     tgt_c_h  = dn(tgt_cal)
 
@@ -589,7 +617,7 @@ def main():
     # ── Numeric report ────────────────────────────────────────────────────────
     print_metrics(
         q50_h, tgt_h, persist_h,
-        q10_h, q90_h, alpha,
+        q10_raw_h, q90_raw_h, alpha,
         cov_min, cov_max, MODEL_NAME,
     )
 

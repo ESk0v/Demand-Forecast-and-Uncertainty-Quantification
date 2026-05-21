@@ -44,13 +44,14 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
     train_loader = make_loader(train_dataset, shuffle=True,  batch_size=config.batch_size)
     val_loader   = make_loader(val_dataset,   shuffle=False, batch_size=config.batch_size * 8)
     cal_loader   = make_loader(cal_dataset,   shuffle=False, batch_size=config.batch_size * 8)
+    test_loader  = make_loader(test_dataset,  shuffle=False, batch_size=config.batch_size * 8)
 
     if device == "cuda":
         torch.cuda.empty_cache()
 
     best_val_loss, train_losses, val_losses = train_model(
-        config, train_loader, val_loader, cal_loader,
-        train_size, val_size, cal_size,
+        config, train_loader, val_loader, cal_loader, test_loader,
+        train_size, val_size, cal_size, test_size,
         model_save_path, logger,
         patience        = patience,
         conformal_alpha = CONFORMAL_ALPHA,

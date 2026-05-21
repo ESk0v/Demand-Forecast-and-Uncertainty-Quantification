@@ -293,8 +293,8 @@ def plot_coverage_per_horizon(q10, q90, targets, u_alpha_t, save_path, alpha=0.1
     print(f"Coverage plot saved to {save_path}")
 
 
-def train_model(config, train_loader, val_loader, cal_loader,
-                train_size, val_size, cal_size,
+def train_model(config, train_loader, val_loader, cal_loader, test_loader,
+                train_size, val_size, cal_size, test_size,
                 model_save_path, logger=None, patience=20, conformal_alpha=0.2):
     """
     Full training loop with warmup, early stopping, and conformal calibration.
@@ -422,8 +422,11 @@ def train_model(config, train_loader, val_loader, cal_loader,
     coverage_plot_path = os.path.join(plot_dir, "coverage_per_horizon.png")
 
     plot_train_val_loss(train_losses, val_losses, checkpoint['epoch'], loss_plot_path)
+
+    # Use test set for coverage plot
+    q10_test, q50_test, q90_test, tgt_test = collect_predictions(model, test_loader, config.device)
     plot_coverage_per_horizon(
-        q10_raw, q90_raw, tgt_cal, u_alpha_t,
+        q10_test, q90_test, tgt_test, u_alpha_t,
         coverage_plot_path, alpha=conformal_alpha
     )
 
