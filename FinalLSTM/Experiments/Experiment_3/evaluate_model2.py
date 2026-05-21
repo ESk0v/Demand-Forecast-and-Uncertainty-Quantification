@@ -1,38 +1,8 @@
-"""
-evaluate_model2.py
-==================
-Generates all required plots and numeric metrics for Model_2_decoupled_no_detach.
-
-Outputs
--------
-Plots (saved to <checkpoint_dir>/Plots/):
-  - error_over_horizon.png        : RMSE & MAE per forecast horizon (model vs persistence baseline)
-  - reliability_diagram.png       : Per-horizon coverage vs nominal (reliability/calibration plot)
-  - train_val_loss.png            : Train vs validation loss curve
-  - cosine_similarity_and_coverage.png
-  - actual_vs_predicted.png
-  - test_predictions.png
-
-Console output (copy-paste ready):
-  - RMSE / MAE / R2 at horizons 1, 24, 168  (model + persistence)
-  - Average interval width  (q90 - q10, raw and normalized)
-  - Average prediction value on test set
-  - Winkler score  (overall + per-horizon) for this model
-  - Min / max empirical coverage from reliability diagram
-
-Usage
------
-  python evaluate_model2.py --dataset data/dataset.pt --run-subdir original
-
-  # or explicit checkpoint:
-  python evaluate_model2.py --dataset data/dataset.pt \
-      --checkpoint Model_2_decoupled_no_detach/original/model_decoupled.pt
-"""
-
 import argparse
 import importlib.util
 import os
 import sys
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -45,8 +15,8 @@ from torch.utils.data import DataLoader, Subset, TensorDataset
 # ──────────────────────────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-MODULE_DIR  = "Model_2_decoupled_no_detach"
-MODEL_NAME  = "Model_2 Decoupled – No Detach"
+MODULE_DIR  = "Model_11"
+MODEL_NAME  = "Model_11"
 
 CHECKPOINT_CANDIDATES = (
     "model_decoupled.pt",
@@ -77,7 +47,7 @@ def _load_module(name: str, path: str):
     return mod
 
 
-def _find_checkpoint(module_dir: str, run_subdir: str, explicit: str | None) -> str:
+def _find_checkpoint(module_dir: str, run_subdir: str, explicit: Optional[str]) -> str:
     if explicit:
         p = _resolve(explicit)
         if not os.path.isfile(p):
@@ -228,47 +198,61 @@ STYLE = dict(
 
 
 def _savefig(fig, path, dpi=150):
-    plt.tight_layout()
-    fig.savefig(path, dpi=dpi)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])   # leave room for suptitle
+    fig.savefig(path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {path}")
 
 
 # 1. Error over forecast horizon ─────────────────────────────────────────────
-def plot_error_over_horizon(q50_h, tgt_h, persist_h, save_path, model_name):
+def plot_error_over_horizon(q50_h, tgt_h, persist_h, save_path):
     H = q50_h.shape[1]
     hours = np.arange(1, H + 1)
 
-    rmse_model   = np.array([rmse(tgt_h[:, t], q50_h[:, t])    for t in range(H)])
-    mae_model    = np.array([mae (tgt_h[:, t], q50_h[:, t])    for t in range(H)])
-    rmse_persist = np.array([rmse(tgt_h[:, t], persist_h[:, t]) for t in range(H)])
-    mae_persist  = np.array([mae (tgt_h[:, t], persist_h[:, t]) for t in range(H)])
+    rmse_model   = np.array([rmse(tgt_h[:, t], q50_h[:, t])     for t in range(H)])
+    mae_model    = np.array([mae (tgt_h[:, t], q50_h[:, t])      for t in range(H)])
+    rmse_persist = np.array([rmse(tgt_h[:, t], persist_h[:, t])  for t in range(H)])
+    mae_persist  = np.array([mae (tgt_h[:, t], persist_h[:, t])  for t in range(H)])
+
+    # ── Console output ────────────────────────────────────────────────────────
+    for metric_m, metric_b, name in [
+        (rmse_model, rmse_persist, "RMSE"),
+        (mae_model,  mae_persist,  "MAE"),
+    ]:
+        better_hours = hours[metric_m < metric_b]
+        if len(better_hours):
+            lowest_hour = int(hours[np.argmin(metric_m)])
+            print(f"  [{name}] Model beats persistence at hours: {better_hours.tolist()}")
+            print(f"  [{name}] Lowest model error at hour: {lowest_hour}")
+        else:
+            print(f"  [{name}] Model never beats persistence baseline.")
+
+    # ── Plot ──────────────────────────────────────────────────────────────────
+    # Build day-based x-ticks (every 24 h)
+    day_ticks      = np.arange(24, H + 1, 24)          # 24, 48, 72, …
+    day_tick_labels = [f"day {d // 24}" for d in day_ticks]
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 5))
 
-    for ax, metric_m, metric_b, ylabel, title_suffix in [
+    for ax, metric_m, metric_b, ylabel, title in [
         (axes[0], rmse_model, rmse_persist, "RMSE", "RMSE over Forecast Horizon"),
         (axes[1], mae_model,  mae_persist,  "MAE",  "MAE over Forecast Horizon"),
     ]:
         ax.plot(hours, metric_m, color=STYLE["model_color"],
-                lw=STYLE["lw"], label=f"{model_name}")
+                lw=STYLE["lw"], label="Proposed model")
         ax.plot(hours, metric_b, color=STYLE["baseline_color"],
                 lw=STYLE["lw"], linestyle="--", label="Persistence baseline")
 
-        # mark the three key horizons
-        for h_idx, h_lbl in EVAL_HORIZONS.items():
-            xi = h_idx - 1
-            ax.axvline(x=h_idx, color="#6B7280", lw=0.8, linestyle=":")
-            ax.annotate(h_lbl, xy=(h_idx, max(metric_m[xi], metric_b[xi])),
-                        xytext=(4, 4), textcoords="offset points", fontsize=8, color="#374151")
+        ax.set_xticks(day_ticks)
+        ax.set_xticklabels(day_tick_labels, rotation=45, ha="right")
 
-        ax.set_xlabel("Forecast Horizon (hours)")
+        ax.set_xlabel("Forecast Horizon")
         ax.set_ylabel(ylabel)
-        ax.set_title(f"{model_name} – {title_suffix}")
-        ax.legend(fontsize=9)
+        ax.set_title(title)
+        ax.legend(fontsize=14)
         ax.grid(True, alpha=STYLE["grid_alpha"])
 
-    fig.suptitle(f"{model_name} – Error over Forecast Horizon", fontsize=14, y=1.01)
+    fig.suptitle("Error over Forecast Horizon", fontsize=14)
     _savefig(fig, save_path)
 
 
@@ -295,7 +279,7 @@ def plot_reliability_diagram(q10_cal, q90_cal, targets, alpha, save_path, model_
     ax.set_xlabel("Forecast Horizon (hours)")
     ax.set_ylabel("Coverage (%)")
     ax.set_title(f"{model_name} – Reliability Diagram (Per-Horizon Coverage)")
-    ax.legend(fontsize=9)
+    ax.legend(fontsize=14)
     ax.grid(True, alpha=STYLE["grid_alpha"])
     _savefig(fig, save_path)
 
@@ -312,58 +296,60 @@ def plot_train_val_loss(train_losses, val_losses, best_epoch, save_path, model_n
                label=f"Best epoch ({best_epoch})")
     ax.set_xlabel("Epoch"); ax.set_ylabel("Loss")
     ax.set_title(f"{model_name} – Train vs Validation Loss")
-    ax.legend(fontsize=10); ax.grid(True, alpha=STYLE["grid_alpha"])
+    ax.legend(fontsize=14); ax.grid(True, alpha=STYLE["grid_alpha"])
     all_l = list(train_losses) + list(val_losses)
     if all_l and min(all_l) > 0 and max(all_l) / min(all_l) > 10:
         ax.set_yscale("log"); ax.set_ylabel("Loss (log scale)")
     _savefig(fig, save_path)
 
 
-# 4. Cosine similarity + coverage ────────────────────────────────────────────
-def plot_cosine_and_coverage(
-    cos_sims, q10_raw, q50_raw, q90_raw, tgt_cal,
-    u_alpha_t, save_path, model_name, alpha=0.1
-):
-    q10_cal = q10_raw - u_alpha_t[np.newaxis, :]
-    q90_cal = q90_raw + u_alpha_t[np.newaxis, :]
-    raw_cov = np.mean((tgt_cal >= q10_raw) & (tgt_cal <= q90_raw), axis=0) * 100
-    cal_cov = np.mean((tgt_cal >= q10_cal) & (tgt_cal <= q90_cal), axis=0) * 100
-    nominal = (1 - alpha) * 100
-    mae_q50 = float(np.mean(np.abs(q50_raw - tgt_cal)))
-    gen_cov = float(np.mean((tgt_cal >= q10_raw) & (tgt_cal <= q90_raw)) * 100)
-
-    fig, (ax_cos, ax_cov) = plt.subplots(2, 1, figsize=(14, 10))
+def plot_cosine_similarity(cos_sims, save_path, model_name):
+    fig, ax = plt.subplots(figsize=(14, 5))
     epochs = np.arange(1, len(cos_sims) + 1)
-    ax_cos.plot(epochs, cos_sims, color="purple", marker="o",
-                lw=1.4, markersize=3, label="Avg cosine similarity / epoch")
+    ax.plot(epochs, cos_sims, color="purple", marker="o",
+            lw=1.4, markersize=3, label="Avg cosine similarity / epoch")
     if len(cos_sims) > 0:
         y_lo = max(-1.0, min(cos_sims) - 0.1)
         y_hi = min(1.0,  max(cos_sims) + 0.1)
         if y_lo == y_hi: y_lo -= 0.1; y_hi += 0.1
-        ax_cos.set_ylim(y_lo, y_hi)
-    ax_cos.set_xlabel("Epoch"); ax_cos.set_ylabel("Cosine Similarity")
-    ax_cos.set_title(f"{model_name} – Gradient Interference (Encoder)")
-    ax_cos.grid(True, alpha=STYLE["grid_alpha"]); ax_cos.legend()
+        ax.set_ylim(y_lo, y_hi)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Cosine Similarity")
+    ax.set_title(f"{model_name} – Gradient Interference (Encoder)")
+    ax.grid(True, alpha=STYLE["grid_alpha"])
+    ax.legend()
+    _savefig(fig, save_path)
 
-    horizons = np.arange(1, len(raw_cov) + 1)
-    l1, = ax_cov.plot(horizons, raw_cov, color="steelblue", label="Raw coverage")
-    l2, = ax_cov.plot(horizons, cal_cov, color=STYLE["cal_color"], label="Calibrated coverage")
-    l3  = ax_cov.axhline(y=nominal, color=STYLE["nominal_color"],
-                         linestyle="--", label=f"Nominal {nominal:.0f}%")
-    ax_cov.set_ylim(50, 100)
-    ax_cov.set_xlabel("Forecast Horizon (hours)"); ax_cov.set_ylabel("Coverage (%)")
-    ax_cov.set_title(f"{model_name} – Coverage Per Horizon")
-    ax_cov.grid(True, alpha=STYLE["grid_alpha"])
-    leg1 = ax_cov.legend(handles=[l1, l2, l3], loc="lower left", fontsize=9)
-    ax_cov.add_artist(leg1)
-    ax_cov.legend(
-        handles=[
-            Line2D([], [], color="none", label=f"MAE (q50 vs target): {mae_q50:.4f}"),
-            Line2D([], [], color="none", label=f"General coverage: {gen_cov:.2f}%"),
-        ],
-        loc="lower right", frameon=True, title="Metrics",
-        handlelength=0, handletextpad=0, fontsize=9,
-    )
+
+def plot_coverage_per_horizon(
+    q10_test, q90_test, tgt_test,
+    u_alpha_t, save_path, alpha=0.1
+):
+    raw_cov = np.mean((tgt_test >= q10_test) & (tgt_test <= q90_test), axis=0) * 100
+    nominal = (1 - alpha) * 100
+    gen_cov = float(np.mean((tgt_test >= q10_test) & (tgt_test <= q90_test)) * 100)
+
+    H = tgt_test.shape[1]
+    hours      = np.arange(1, H + 1)
+    day_ticks  = np.arange(24, H + 1, 24)
+    day_labels = [f"day {d // 24}" for d in day_ticks]
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+    ax.plot(hours, raw_cov, color="steelblue", lw=STYLE["lw"], label="Empirical coverage")
+    ax.axhline(y=nominal, color=STYLE["nominal_color"],
+               linestyle="--", lw=STYLE["lw"], label=f"Nominal {nominal:.0f}%")
+    ax.axhline(y=gen_cov, color="steelblue", linestyle=":",
+               lw=1.2, label=f"General coverage: {gen_cov:.2f}%")
+
+    ax.set_xticks(day_ticks)
+    ax.set_xticklabels(day_labels, rotation=45, ha="right")
+    ax.set_ylim(75, 100)
+    ax.set_xlabel("Forecast Horizon")
+    ax.set_ylabel("Coverage (%)")
+    ax.set_title(f"Average Coverage per Horizon")
+    ax.grid(True, alpha=STYLE["grid_alpha"])
+    ax.legend(loc="lower left", fontsize=14)
+
     _savefig(fig, save_path)
 
 
@@ -381,7 +367,7 @@ def plot_actual_vs_predicted(
         ax = axes[0, col]
         ax.scatter(actual, pred, s=4, alpha=0.25, color=STYLE["model_color"])
         ax.plot([lo, hi], [lo, hi], "k--", lw=1.0)
-        ax.set_title(f"{model_name} – LSTM ({h_lbl})\nR²={r2(actual, pred):.4f}")
+        ax.set_title(f"Proposed Model ({h_lbl})\nR²={r2(actual, pred):.4f}")
         ax.set_xlabel("Actual"); ax.set_ylabel("Predicted")
         ax.grid(True, alpha=STYLE["grid_alpha"])
 
@@ -391,11 +377,11 @@ def plot_actual_vs_predicted(
         ax = axes[1, col]
         ax.scatter(actual, pred, s=4, alpha=0.25, color="coral")
         ax.plot([lo, hi], [lo, hi], "k--", lw=1.0)
-        ax.set_title(f"{model_name} – Persistence ({h_lbl})\nR²={r2(actual, pred):.4f}")
+        ax.set_title(f"Persistence Baseline ({h_lbl})\nR²={r2(actual, pred):.4f}")
         ax.set_xlabel("Actual"); ax.set_ylabel("Predicted")
         ax.grid(True, alpha=STYLE["grid_alpha"])
 
-    fig.suptitle(f"{model_name} – Actual vs Predicted (+ Persistence Baseline)", fontsize=14)
+    fig.suptitle("Residual Distribution", fontsize=14)
     _savefig(fig, save_path)
 
 
@@ -555,7 +541,7 @@ def main():
 
     plot_error_over_horizon(
         q50_h, tgt_h, persist_h,
-        os.path.join(plot_dir, "error_over_horizon.png"), MODEL_NAME,
+        os.path.join(plot_dir, "error_over_horizon.png"),
     )
 
     cov_min, cov_max = plot_reliability_diagram(
@@ -577,11 +563,16 @@ def main():
     cos_sims = list(_to_np(ckpt.get("train_cos_sims", [])))
     if not cos_sims:
         cos_sims = [0.0] * len(train_losses)
-    plot_cosine_and_coverage(
-        cos_sims, q10_cal_raw, q50_cal_raw, q90_cal_raw, tgt_cal,
+    plot_cosine_similarity(
+    cos_sims,
+    os.path.join(plot_dir, "cosine_similarity.png"),
+    MODEL_NAME,
+)
+
+    plot_coverage_per_horizon(
+        q10_raw, q90_raw, tgt_raw,      # <-- test set, not cal
         _to_np(u_alpha_t),
-        os.path.join(plot_dir, "cosine_similarity_and_coverage.png"),
-        MODEL_NAME, alpha=alpha,
+        os.path.join(plot_dir, "coverage_per_horizon.png"),
     )
 
     plot_actual_vs_predicted(

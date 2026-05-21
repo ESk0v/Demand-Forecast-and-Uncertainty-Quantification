@@ -298,6 +298,10 @@ def plot_reliability(results: list, output_path: str):
     # ── Per-model single box plot ─────────────────────────────────────────────
     box_width = 3.0   # width in % units on the x-axis
 
+    print("\n" + "─" * 72)
+    print(f"  {'Model':<20} | {'Target':>8} | {'Min':>8} | {'Mean':>8} | {'Max':>8}")
+    print("─" * 72)
+
     for model_idx, res in enumerate(results):
         color          = PALETTE[model_idx % len(PALETTE)]
         nominal_target = (1.0 - res["conformal_alpha"]) * 100.0   # x position
@@ -316,8 +320,10 @@ def plot_reliability(results: list, output_path: str):
         wmax = float(stats["wmax"][0]) * 100
         xc   = nominal_target
 
-        label = (f"{res['name']}  "
-                 f"(target {nominal_target:.0f}%,  mean {mean:.1f}%)")
+        print(f"  {res['name']:<20} | Target: {nominal_target:5.1f}% | Min: {wmin:5.1f}% | Mean: {mean:5.1f}% | Max: {wmax:5.1f}%")
+
+        label = (f"{res['name']}"
+                 f", mean {mean:.1f}%")
 
         # Whisker: min → max
         ax.plot([xc, xc], [wmin, wmax],
@@ -342,6 +348,8 @@ def plot_reliability(results: list, output_path: str):
         # Legend swatch
         ax.plot([], [], color=color, linewidth=2.2, label=label)
 
+    print("─" * 72)
+
     # ── Axes ──────────────────────────────────────────────────────────────────
     ax.set_xlim(-2, 102)
     ax.set_ylim(-2, 102)
@@ -360,7 +368,7 @@ def plot_reliability(results: list, output_path: str):
     ax.tick_params(colors="#444444", labelsize=10)
 
     # Legend
-    ax.legend(fontsize=10, loc="upper left", framealpha=0.9,
+    ax.legend(fontsize=14, loc="upper left", framealpha=0.9,
               edgecolor="#cccccc")
 
     # Box-plot key (small annotation)
@@ -369,7 +377,7 @@ def plot_reliability(results: list, output_path: str):
         "Box: IQR of weekly avg coverage\n"
         "Whiskers: min / max weekly avg\n"
         "─  Mean coverage",
-        transform=ax.transAxes, fontsize=7.5,
+        transform=ax.transAxes, fontsize=14,
         ha="right", va="bottom", color="#555555",
         bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
                   edgecolor="#cccccc", alpha=0.85)
