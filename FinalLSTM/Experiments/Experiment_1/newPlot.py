@@ -48,21 +48,25 @@ def _savefig(fig, path, dpi=150):
 def load_splits(dataset_path, val_ratio=None, cal_ratio=None, test_ratio=None):
     ds   = torch.load(dataset_path, weights_only=False)
     full = TensorDataset(ds["encoder"], ds["decoder"], ds["target"])
-    
-    # Force exact alignment with plot.py
-    n_train  = 11472
-    n_valcal = 2867
-    n_test   = 2867
+
+    # Keep the same chronological ratio-based split used in training.
+    val_ratio  = (1 / 10) if val_ratio is None else val_ratio
+    test_ratio = (1 / 10) if test_ratio is None else test_ratio
+
+    n_total = len(full)
+    n_test  = int(n_total * test_ratio)
+    n_val   = int(n_total * val_ratio)
+    n_train = n_total - n_val - n_test
 
     i1 = n_train
-    i2 = i1 + n_valcal
+    i2 = i1 + n_val
     i3 = i2 + n_test
 
     return (
         Subset(full, range(0,  i1)),   # train
         Subset(full, range(i1, i2)),   # val
         Subset(full, range(i2, i3)),   # test
-        n_train, n_valcal, n_test,
+        n_train, n_val, n_test,
     )
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -140,7 +144,7 @@ def plot_coverage_per_horizon(q10_test, q90_test, tgt_test, save_path, alpha=0.1
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", required=True, help="Path to model.pt (e.g., Model_5/checkpoints/model.pt)")
-    p.add_argument("--dataset", default="FinalLSTM/Experiments/Experiment_1/Model_5/data/dataset.pt", help="Path to dataset.pt")
+    p.add_argument("--dataset", default="Model_5/data/dataset.pt", help="Path to dataset.pt")
     p.add_argument("--batch-size", type=int, default=512)
     p.add_argument("--alpha", type=float, default=None, help="Override conformal alpha")
     args = p.parse_args()

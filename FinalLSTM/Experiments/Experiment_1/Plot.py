@@ -89,9 +89,6 @@ MODEL_CONFIGS = [
     ),
 ]
 
-# Number of nominal coverage levels to evaluate (spread 0 → 1)
-N_LEVELS = 21          # e.g. 0 %, 5 %, 10 %, … 100 %
-
 # How many test samples per "week" for the box-plot breakdown.
 # If your test set has T time steps and each week = 7 steps, set this to 7.
 # Set to None to let the script guess (uses horizon length).
@@ -147,7 +144,9 @@ def load_model_predictions(cfg: dict) -> dict:
         )
 
     # Load dataset — we only need the test split
-    (_, _, test_dataset, _, _, _) = load_and_split_dataset(dataset_path)
+    (_, _, test_dataset, _, _, _) = load_and_split_dataset(
+        dataset_path, val_ratio=0.1, test_ratio=0.1
+    )
 
     config     = Config()
     device     = "cuda" if torch.cuda.is_available() else "cpu"
@@ -194,62 +193,38 @@ def load_model_predictions(cfg: dict) -> dict:
 
 
 # ─── Coverage computation ─────────────────────────────────────────────────────
-def coverage_boxplot_stats(
+def raw_coverage_boxplot_stats(
     q10_raw: np.ndarray,
     q90_raw: np.ndarray,
     targets: np.ndarray,
-    nominal_levels: np.ndarray,
     samples_per_week: Optional[int] = None,
 ) -> dict:
     """
-    For each nominal level p:
-      1. Derive the empirical threshold at level p from non-conformity scores.
-      2. Compute per-sample coverage  (bool).
-      3. Group samples into "weeks" and compute weekly average coverage.
-      4. Return statistics across weeks: mean, q25, q75, min, max.
-
-    Returns a dict of arrays, each of length len(nominal_levels).
+    Compute raw interval coverage from model outputs:
+      covered = (q10 <= y <= q90)
+    Then aggregate weekly stats: mean, q25, q75, min, max.
     """
     N, H = targets.shape
 
-    # Non-conformity score per sample, averaged over forecast horizon
-    scores = np.maximum(
-        np.maximum(q10_raw - targets, targets - q90_raw), 0.0
-    )  # (N, H)
+    covered = (targets >= q10_raw) & (targets <= q90_raw)  # (N, H)
 
     # Group samples into weeks
     spw = samples_per_week or H or 1
     n_weeks   = max(1, N // spw)
     week_ends = np.array_split(np.arange(N), n_weeks)
+    weekly = np.array([
+        covered[idx, :].mean()
+        for idx in week_ends
+    ])  # (n_weeks,)
 
-    stats = {k: np.empty(len(nominal_levels)) for k in
-             ("mean", "q25", "q75", "wmin", "wmax")}
-
-    for i, p in enumerate(nominal_levels):
-        ta = 1.0 - p
-
-        if ta <= 0.0:
-            # All covered by definition
-            weekly = np.ones(n_weeks)
-        elif ta >= 1.0:
-            weekly = np.zeros(n_weeks)
-        else:
-            # Threshold derived from ALL test samples (approximates cal set)
-            thresh  = np.quantile(scores, 1.0 - ta, axis=0)  # (H,)
-            covered = (scores <= thresh[np.newaxis, :])       # (N, H)
-            # Weekly average: mean over samples in the week, then over horizons
-            weekly  = np.array([
-                covered[idx, :].mean()
-                for idx in week_ends
-            ])  # (n_weeks,)
-
-        stats["mean"][i] = float(weekly.mean())
-        stats["q25"][i]  = float(np.percentile(weekly, 25))
-        stats["q75"][i]  = float(np.percentile(weekly, 75))
-        stats["wmin"][i] = float(weekly.min())
-        stats["wmax"][i] = float(weekly.max())
-
-    return stats
+    return dict(
+        weekly_mean=float(weekly.mean()),
+        general_coverage=float(covered.mean()),
+        q25=float(np.percentile(weekly, 25)),
+        q75=float(np.percentile(weekly, 75)),
+        wmin=float(weekly.min()),
+        wmax=float(weekly.max()),
+    )
 
 
 # ─── Plotting ─────────────────────────────────────────────────────────────────
@@ -306,18 +281,16 @@ def plot_reliability(results: list, output_path: str):
         color          = PALETTE[model_idx % len(PALETTE)]
         nominal_target = (1.0 - res["conformal_alpha"]) * 100.0   # x position
 
-        # Compute weekly coverage stats at ONLY this model's nominal target
-        target_level   = np.array([1.0 - res["conformal_alpha"]])
-        stats = coverage_boxplot_stats(
-            res["q10_raw"], res["q90_raw"], res["targets"],
-            target_level, SAMPLES_PER_WEEK,
+        # Raw weekly coverage stats (no conformal post-calibration step)
+        stats = raw_coverage_boxplot_stats(
+            res["q10_raw"], res["q90_raw"], res["targets"], SAMPLES_PER_WEEK
         )
 
-        mean = float(stats["mean"][0]) * 100
-        q25  = float(stats["q25"][0])  * 100
-        q75  = float(stats["q75"][0])  * 100
-        wmin = float(stats["wmin"][0]) * 100
-        wmax = float(stats["wmax"][0]) * 100
+        mean = stats["general_coverage"] * 100
+        q25  = stats["q25"]  * 100
+        q75  = stats["q75"]  * 100
+        wmin = stats["wmin"] * 100
+        wmax = stats["wmax"] * 100
         xc   = nominal_target
 
         print(f"  {res['name']:<20} | Target: {nominal_target:5.1f}% | Min: {wmin:5.1f}% | Mean: {mean:5.1f}% | Max: {wmax:5.1f}%")
@@ -358,7 +331,7 @@ def plot_reliability(results: list, output_path: str):
     ax.set_xlabel("Nominal Coverage Level", fontsize=12, labelpad=8)
     ax.set_ylabel("Empirical Coverage", fontsize=12, labelpad=8)
     ax.set_title(
-        "Reliability Diagram — Conformal Prediction Intervals",
+        "Reliability Diagram — Raw Prediction Interval Coverage",
         fontsize=13, fontweight="bold", pad=14
     )
 

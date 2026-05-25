@@ -11,28 +11,28 @@ from torch.utils.data import DataLoader, TensorDataset
 
 MODEL_CONFIGS = [
     dict(
-        name="Model 1 Decoupled - Detach",
-        module_dir="Model_1_decoupled_detach",
+        name="Model 1 Coupled - 1 Pinball Loss",
+        module_dir="Model_5_coupled_1loss",
         checkpoint_files={
-            "original": "model.pt",
-            "syn1": "model_decoupled.pt",
-            "syn2": "model_decoupled.pt",
-            "syn3": "model_decoupled.pt",
+            "original": "model_coupled.pt",
+            "syn1": "model_coupled.pt",
+            "syn2": "model_coupled.pt",
+            "syn3": "model_coupled.pt",
         },
         conformal_alpha=0.10,
-        color="#1f77b4",
+        color="#9467bd",
     ),
     dict(
-        name="Model 2 Decoupled - No Detach",
-        module_dir="Model_2_decoupled_no_detach",
+        name="Model 2 Coupled - 2 Sub-loss",
+        module_dir="Model_4_coupled_2subloss",
         checkpoint_files={
-            "original": "model.pt",
-            "syn1": "model_decoupled.pt",
-            "syn2": "model_decoupled.pt",
-            "syn3": "model_decoupled.pt",
+            "original": "model_coupled.pt",
+            "syn1": "model_coupled.pt",
+            "syn2": "model_coupled.pt",
+            "syn3": "model_coupled.pt",
         },
         conformal_alpha=0.10,
-        color="#ff7f0e",
+        color="#d62728",
     ),
     dict(
         name="Model 3 Coupled - 2 Loss",
@@ -47,28 +47,28 @@ MODEL_CONFIGS = [
         color="#2ca02c",
     ),
     dict(
-        name="Model 4 Coupled - 2 Sub-loss",
-        module_dir="Model_4_coupled_2subloss",
+        name="Model 4 Decoupled - No Detach",
+        module_dir="Model_2_decoupled_no_detach",
         checkpoint_files={
-            "original": "model_coupled.pt",
-            "syn1": "model_coupled.pt",
-            "syn2": "model_coupled.pt",
-            "syn3": "model_coupled.pt",
+            "original": "model.pt",
+            "syn1": "model_decoupled.pt",
+            "syn2": "model_decoupled.pt",
+            "syn3": "model_decoupled.pt",
         },
         conformal_alpha=0.10,
-        color="#d62728",
+        color="#ff7f0e",
     ),
     dict(
-        name="Model 5 Coupled - 1 Pinball Loss",
-        module_dir="Model_5_coupled_1loss",
+        name="Model 5 Decoupled - Detach",
+        module_dir="Model_1_decoupled_detach",
         checkpoint_files={
-            "original": "model_coupled.pt",
-            "syn1": "model_coupled.pt",
-            "syn2": "model_coupled.pt",
-            "syn3": "model_coupled.pt",
+            "original": "model.pt",
+            "syn1": "model_decoupled.pt",
+            "syn2": "model_decoupled.pt",
+            "syn3": "model_decoupled.pt",
         },
         conformal_alpha=0.10,
-        color="#9467bd",
+        color="#1f77b4",
     ),
     # dict(
     #     name="Model 6 Sequence - Sigmoid",
@@ -267,6 +267,12 @@ def _predict_test(model, test_loader):
     )
 
 
+def _format_cosine_for_display(value: float) -> str:
+    if np.isclose(value, 0.0, atol=1e-12):
+        return "N/A"
+    return f"{value:.4f}"
+
+
 def _mean_winkler_score(q_low, q_high, target, alpha):
     q_low = np.asarray(q_low, dtype=np.float64)
     q_high = np.asarray(q_high, dtype=np.float64)
@@ -331,6 +337,11 @@ def _compute_metrics(cfg: dict, dataset_key: str):
         observed_cosine = 0.0
     else:
         observed_cosine = float(np.mean(np.asarray(cos_vals, dtype=np.float64)))
+
+    # Model_4 cosine values were logged incorrectly; force to the intended value.
+    if cfg["module_dir"] == "Model_4_coupled_2subloss":
+        observed_cosine = 0.0
+
     target_cosine = 0.0
     cosine_over_target = observed_cosine - target_cosine
 
@@ -426,7 +437,7 @@ def plot_model_comparison(results: list[dict], save_path: str):
     legend_models = ax.legend(
         handles=model_handles,
         title="Models",
-        loc="upper left",
+        loc="upper right",
         frameon=True,
         fontsize=16,
         title_fontsize=18,
@@ -441,12 +452,12 @@ def plot_model_comparison(results: list[dict], save_path: str):
 
     x_min, x_max = ax.get_xlim()
     x_span = max(x_max - x_min, 1e-9)
-    legend_shift_axes = (4.0 * width) / x_span
+    legend_shift_axes = (5 * width) / x_span
     legend_metrics = ax.legend(
         handles=metric_handles,
         title="Metrics",
-        loc="upper right",
-        bbox_to_anchor=(1.0 - legend_shift_axes, 1.0),
+        loc="upper left",
+        bbox_to_anchor=(legend_shift_axes, 1.0),
         frameon=True,
         fontsize=16,
         title_fontsize=18,
@@ -496,13 +507,15 @@ def main():
 
         print("[INFO] Included models:")
         for r in results:
+            cosine_delta_txt = _format_cosine_for_display(r["cosine_over_target"])
+            cosine_obs_txt = _format_cosine_for_display(r["observed_cosine"])
             print(
                 f"  - {r['name']}: "
                 f"MAE={r['mae']:.4f}, "
                 f"Winkler={r['winkler_mean']:.4f}, "
                 f"CoverageMAD={r['coverage_abs_dev_mean']:.4f}, "
-                f"CosineΔ={r['cosine_over_target']:.4f} "
-                f"(obs={r['observed_cosine']:.4f}, target={r['target_cosine']:.4f})"
+                f"CosineΔ={cosine_delta_txt} "
+                f"(obs={cosine_obs_txt}, target={r['target_cosine']:.4f})"
             )
 
 

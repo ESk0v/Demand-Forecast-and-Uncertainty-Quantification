@@ -14,3 +14,9 @@ venv/
 
 # Logs
 *.log
+/.python-version
+/.venv/
+/.venv311/
+/.venv313/
+*.DS_Store
+.idea

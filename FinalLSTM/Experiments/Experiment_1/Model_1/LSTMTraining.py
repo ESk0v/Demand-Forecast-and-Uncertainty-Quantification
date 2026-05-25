@@ -10,10 +10,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from LSTMModel import LSTMForecast
 
 
-def load_and_split_dataset(dataset_path, val_ratio=1/6, test_ratio=1/6):
+def load_and_split_dataset(dataset_path, val_ratio=1/10, test_ratio=1/10):
     """
     Chronological 3-way split — no data leakage.
-    Effective proportions:  train ≈ 4/6%  val ≈ 1/6%  test ≈ 1/6%
+    Effective proportions:  train = 80%  val = 10%  test = 10%
     """
     dataset = torch.load(dataset_path, weights_only=False)
 
