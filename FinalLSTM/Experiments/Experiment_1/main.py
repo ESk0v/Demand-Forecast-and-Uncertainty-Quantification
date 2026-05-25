@@ -1,10 +1,3 @@
-"""
-CoveragePlot/main.py
-────────────────────
-Trains N models (each with its own conformal alpha / coverage target)
-and saves synthetic_data_1. Run Plot.py separately to generate the plot.
-"""
-
 import os
 import sys
 import random
@@ -12,7 +5,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-# ─── Reproducibility ──────────────────────────────────────────────────────────
+# Reproducibility
 GLOBAL_SEED = 42
 
 def set_seed(seed: int):
@@ -25,38 +18,38 @@ def set_seed(seed: int):
 
 MODEL_CONFIGS = [
     dict(
-        name            = "50% target",
+        name            = "10% target",
         module_dir      = "Model_1",
         dataset_path    = "Model_1/data/dataset.pt",
         model_save_path = "Model_1/checkpoints/model.pt",
-        conformal_alpha = 0.50,   # 1 - 0.50
+        conformal_alpha = 0.90,   # 1 - 0.50
         epochs          = 50,
         patience        = 5,
     ),
     dict(
-        name            = "60% target",
+        name            = "30% target",
         module_dir      = "Model_2",
         dataset_path    = "Model_2/data/dataset.pt",
         model_save_path = "Model_2/checkpoints/model.pt",
-        conformal_alpha = 0.40,   # 1 - 0.60
+        conformal_alpha = 0.70,   # 1 - 0.60
+        epochs          = 50,
+        patience        = 5,
+    ),
+    dict(
+        name            = "50% target",
+        module_dir      = "Model_3",
+        dataset_path    = "Model_3/data/dataset.pt",
+        model_save_path = "Model_3/checkpoints/model.pt",
+        conformal_alpha = 0.50,   # 1 - 0.70
         epochs          = 50,
         patience        = 5,
     ),
     dict(
         name            = "70% target",
-        module_dir      = "Model_3",
-        dataset_path    = "Model_3/data/dataset.pt",
-        model_save_path = "Model_3/checkpoints/model.pt",
-        conformal_alpha = 0.30,   # 1 - 0.70
-        epochs          = 50,
-        patience        = 5,
-    ),
-    dict(
-        name            = "80% target",
         module_dir      = "Model_4",
         dataset_path    = "Model_4/data/dataset.pt",
         model_save_path = "Model_4/checkpoints/model.pt",
-        conformal_alpha = 0.20,   # 1 - 0.80
+        conformal_alpha = 0.70,   # 1 - 0.80
         epochs          = 50,
         patience        = 5,
     ),
@@ -65,14 +58,14 @@ MODEL_CONFIGS = [
         module_dir      = "Model_5",
         dataset_path    = "Model_5/data/dataset.pt",
         model_save_path = "Model_5/checkpoints/model.pt",
-        conformal_alpha = 0.10,   # 1 - 0.90
+        conformal_alpha = 0.90,   # 1 - 0.90
         epochs          = 50,
         patience        = 5,
     ),
 ]
 
 
-# ─── Minimal logger ───────────────────────────────────────────────────────────
+# Minimal logger
 class _SimpleLogger:
     def info(self,    msg): print(f"[INFO]    {msg}")
     def success(self, msg): print(f"[SUCCESS] {msg}")
@@ -129,8 +122,8 @@ def train_one_model(cfg: dict):
             f"Place your dataset.pt inside {os.path.join(abs_module_dir, 'data')}"
         )
 
-    (train_dataset, val_dataset, cal_dataset, test_dataset,
-     train_size, val_size, cal_size, test_size) = load_and_split_dataset(
+    (train_dataset, val_dataset, test_dataset,
+     train_size, val_size, test_size) = load_and_split_dataset(
         dataset_path
     )
 
@@ -151,7 +144,6 @@ def train_one_model(cfg: dict):
 
     train_loader = make_loader(train_dataset, True,  config.batch_size)
     val_loader   = make_loader(val_dataset,   False, config.batch_size * 8)
-    cal_loader   = make_loader(cal_dataset,   False, config.batch_size * 8)
 
     os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
@@ -161,8 +153,8 @@ def train_one_model(cfg: dict):
     logger.info(f"[{cfg['name']}] Starting training …")
 
     train_model(
-        config, train_loader, val_loader, cal_loader,
-        train_size, val_size, cal_size,
+        config, train_loader, val_loader,
+        train_size, val_size,
         model_save_path,
         logger          = logger,
         patience        = cfg["patience"],

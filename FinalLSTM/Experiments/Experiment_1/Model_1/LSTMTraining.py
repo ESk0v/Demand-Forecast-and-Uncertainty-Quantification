@@ -10,17 +10,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from LSTMModel import LSTMForecast
 
 
-def load_and_split_dataset(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
+def load_and_split_dataset(dataset_path, val_ratio=1/6, test_ratio=1/6):
     """
-    Chronological 4-way split — no data leakage.
-
-    CHANGE: val and cal are now drawn from the same combined pool (30% of data).
-    The first 66% of that pool is used for early stopping (val),
-    the last 34% is used for conformal calibration (cal).
-    Neither set ever touches model weights, so merging them is safe and gives
-    a larger, more representative calibration set.
-
-    Effective proportions:  train=70%  val=20%  cal=10%  test=10%
+    Chronological 3-way split — no data leakage.
+    Effective proportions:  train ≈ 4/6%  val ≈ 1/6%  test ≈ 1/6%
     """
     dataset = torch.load(dataset_path, weights_only=False)
 
@@ -29,33 +22,26 @@ def load_and_split_dataset(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ra
     target_data  = dataset['target']
     full_dataset = TensorDataset(encoder_data, decoder_data, target_data)
 
-    n_total     = len(full_dataset)
-    test_size   = int(n_total * test_ratio)
-    valcal_size = int(n_total * (val_ratio + cal_ratio))
-    train_size  = n_total - valcal_size - test_size
+    n_total    = len(full_dataset)
+    test_size  = int(n_total * test_ratio)
+    val_size   = int(n_total * val_ratio)
+    train_size = n_total - val_size - test_size
 
     i0 = 0
     i1 = train_size
-    i2 = i1 + valcal_size
+    i2 = i1 + val_size
     i3 = i2 + test_size   # == n_total
-
-    # val and cal both use the full valcal pool.
-    # Neither set touches model weights so there is no leakage.
-    val_size = valcal_size
-    cal_size = valcal_size
 
     train_dataset = Subset(full_dataset, range(i0, i1))
     val_dataset   = Subset(full_dataset, range(i1, i2))
-    cal_dataset   = Subset(full_dataset, range(i1, i2))
     test_dataset  = Subset(full_dataset, range(i2, i3))
 
     print(
         f"Split sizes — train: {train_size}  val: {val_size}  "
-        f"cal: {cal_size}  test: {test_size}  (total: {n_total})"
+        f"test: {test_size}  (total: {n_total})"
     )
 
-    return (train_dataset, val_dataset, cal_dataset, test_dataset,
-            train_size, val_size, cal_size, test_size)
+    return train_dataset, val_dataset, test_dataset, train_size, val_size, test_size
 
 
 def get_lr(epoch, warmup_epochs=3, base_lr=1e-4):
@@ -69,6 +55,27 @@ def get_lr(epoch, warmup_epochs=3, base_lr=1e-4):
         return base_lr * (epoch / warmup_epochs)
     return base_lr
 
+def collect_predictions(model, loader, device):
+    """Run inference over a DataLoader and return (q10, q50, q90, targets) as numpy arrays."""
+    model.eval()
+    all_q10, all_q50, all_q90, all_tgt = [], [], [], []
+
+    with torch.no_grad():
+        for enc, dec, tgt in loader:
+            enc, dec, tgt = enc.to(device), dec.to(device), tgt.to(device)
+            q10, q50, q90 = model(enc, dec)
+
+            all_q10.append(q10.cpu().numpy())
+            all_q50.append(q50.cpu().numpy())
+            all_q90.append(q90.cpu().numpy())
+            all_tgt.append(tgt.cpu().numpy())
+
+    return (
+        np.concatenate(all_q10),
+        np.concatenate(all_q50),
+        np.concatenate(all_q90),
+        np.concatenate(all_tgt),
+    )
 
 def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, train_size, conformal_alpha=0.2):
     """
@@ -148,73 +155,6 @@ def validate_epoch(model, val_loader, device, val_size, conformal_alpha=0.2):
     return val_loss_epoch / val_size
 
 
-def collect_predictions(model, loader, device):
-    """Run inference over a DataLoader and return (q10, q50, q90, targets) as numpy arrays."""
-    model.eval()
-    all_q10, all_q50, all_q90, all_tgt = [], [], [], []
-
-    with torch.no_grad():
-        for enc, dec, tgt in loader:
-            enc, dec, tgt = enc.to(device), dec.to(device), tgt.to(device)
-            q10, q50, q90 = model(enc, dec)
-
-            all_q10.append(q10.cpu().numpy())
-            all_q50.append(q50.cpu().numpy())
-            all_q90.append(q90.cpu().numpy())
-            all_tgt.append(tgt.cpu().numpy())
-
-    return (
-        np.concatenate(all_q10),
-        np.concatenate(all_q50),
-        np.concatenate(all_q90),
-        np.concatenate(all_tgt),
-    )
-
-
-def conformal_calibration(q10, q50, q90, targets, alpha=0.1):
-    # 1. Fix crossing quantiles
-    q10 = np.minimum(q10, q50)
-    q90 = np.maximum(q90, q50)
-
-    # 2. Non-conformity scores — 0 if inside [q10, q90], else distance to nearest bound
-    scores = np.maximum(
-        np.maximum(q10 - targets, targets - q90),
-        0
-    )  # (N, H)
-
-    n_horizons = scores.shape[1]
-
-    # Flat alpha across all horizons — every horizon targets the same coverage
-    u_alpha_t = np.array([
-        np.quantile(scores[:, t], 1.0 - alpha)
-        for t in range(n_horizons)
-    ])  # (H,)
-
-    q10_cal = q10 - u_alpha_t[np.newaxis, :]
-    q90_cal = q90 + u_alpha_t[np.newaxis, :]
-
-    empirical_coverage = float(
-        np.mean((targets >= q10_cal) & (targets <= q90_cal))
-    )
-
-    per_horizon_coverage = np.mean(
-        (targets >= q10_cal) & (targets <= q90_cal), axis=0
-    )
-    print(
-        f"Empirical coverage on cal set: {empirical_coverage:.3f} "
-        f"(target ≈ {1 - alpha:.2f})"
-    )
-    print(
-        f"Per-horizon coverage — "
-        f"h1: {per_horizon_coverage[0]:.2f}  "
-        f"h24: {per_horizon_coverage[23]:.2f}  "
-        f"h72: {per_horizon_coverage[71]:.2f}  "
-        f"h168: {per_horizon_coverage[-1]:.2f}"
-    )
-
-    return q10_cal, q90_cal, u_alpha_t
-
-
 def save_checkpoint(model, optimizer_point, optimizer_spread, config, epoch, val_loss,
                     train_losses, val_losses, model_save_path):
     torch.save({
@@ -254,48 +194,16 @@ def plot_train_val_loss(train_losses, val_losses, best_epoch, save_path):
     plt.close()
 
 
-def plot_coverage_per_horizon(q10, q90, targets, u_alpha_t, save_path, alpha=0.1):
-    """
-    Plot raw vs calibrated per-horizon coverage.
-    Generated automatically after every training run so you can immediately
-    see whether the flat alpha calibration is working as intended.
-    """
-    q10_cal = q10 - u_alpha_t[np.newaxis, :]
-    q90_cal = q90 + u_alpha_t[np.newaxis, :]
-
-    raw_coverage = np.mean((targets >= q10) & (targets <= q90), axis=0)
-    cal_coverage = np.mean((targets >= q10_cal) & (targets <= q90_cal), axis=0)
-
-    fig, ax = plt.subplots(figsize=(12, 5))
-    horizons = np.arange(1, len(raw_coverage) + 1)
-    ax.plot(horizons, raw_coverage * 100, label="Raw interval coverage",            color='steelblue')
-    ax.plot(horizons, cal_coverage * 100, label="Per-horizon calibrated coverage",  color='green')
-    ax.axhline(y=(1 - alpha) * 100, color='orange', linestyle='--',
-               label=f'Nominal {(1 - alpha) * 100:.0f}% target')
-    ax.set_xlabel("Forecast Horizon (hours)", fontsize=12)
-    ax.set_ylabel("Coverage (%)", fontsize=12)
-    ax.set_title("Prediction Interval Coverage per Horizon\nRaw vs Conformal-Calibrated", fontsize=13)
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim(0, 105)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150)
-    plt.close()
-    print(f"Coverage plot saved to {save_path}")
-
-
-def train_model(config, train_loader, val_loader, cal_loader,
-                train_size, val_size, cal_size,
+def train_model(config, train_loader, val_loader,
+                train_size, val_size,
                 model_save_path, logger=None, patience=20, conformal_alpha=0.2):
     """
-    Full training loop with warmup, early stopping, and conformal calibration.
+    Full training loop with warmup and early stopping.
 
       val set  → early stopping / model selection only
-      cal set  → conformal calibration (never seen during training)
       test set → final held-out evaluation (handled outside this function)
 
-    conformal_alpha controls both the interval training loss and the
-    conformal calibration step, ensuring they target the same coverage level.
+    conformal_alpha controls the interval training loss target coverage level.
     """
     model = LSTMForecast(config).to(config.device)
 
@@ -381,26 +289,12 @@ def train_model(config, train_loader, val_loader, cal_loader,
     checkpoint = torch.load(model_save_path, weights_only=False)
     checkpoint['train_losses'] = train_losses
     checkpoint['val_losses']   = val_losses
-
-    # ── Conformal calibration ──────────────────────────────────────────────────
-    model.load_state_dict(checkpoint['model_state_dict'])
-
-    if logger is not None:
-        logger.info(f"Running conformal calibration on cal set ({cal_size} samples) …")
-
-    q10_raw, q50_raw, q90_raw, tgt_cal = collect_predictions(model, cal_loader, config.device)
-    _, _, u_alpha_t = conformal_calibration(
-        q10_raw, q50_raw, q90_raw, tgt_cal, alpha=conformal_alpha
-    )
-    checkpoint['conformal_u_alpha'] = u_alpha_t
-    checkpoint['conformal_alpha']   = conformal_alpha
     torch.save(checkpoint, model_save_path)
 
     if logger is not None:
         logger.success(
             f"Training complete. Best checkpoint: epoch {checkpoint['epoch']}  "
-            f"val_loss={checkpoint['val_loss']:.4f}  "
-            f"conformal_u_alpha shape={u_alpha_t.shape}"
+            f"val_loss={checkpoint['val_loss']:.4f}"
         )
 
     # ── Plots ──────────────────────────────────────────────────────────────────
@@ -408,50 +302,13 @@ def train_model(config, train_loader, val_loader, cal_loader,
     plot_dir       = os.path.join(run_dir, "Plots")
     os.makedirs(plot_dir, exist_ok=True)
 
-    loss_plot_path     = os.path.join(plot_dir, "train_val_loss.png")
-    coverage_plot_path = os.path.join(plot_dir, "coverage_per_horizon.png")
-
+    loss_plot_path = os.path.join(plot_dir, "train_val_loss.png")
     plot_train_val_loss(train_losses, val_losses, checkpoint['epoch'], loss_plot_path)
-    plot_coverage_per_horizon(
-        q10_raw, q90_raw, tgt_cal, u_alpha_t,
-        coverage_plot_path, alpha=conformal_alpha
-    )
 
     if logger is not None:
         logger.info(f"Loss curve saved to {loss_plot_path}")
-        logger.info(f"Coverage plot saved to {coverage_plot_path}")
 
     return best_val_loss, train_losses, val_losses
-
-
-def apply_conformal(q10, q90, u_alpha):
-    """
-    Apply saved conformal calibration to new predictions.
-
-    Supports:
-      - scalar u_alpha → same expansion for all horizons
-      - vector u_alpha (per-horizon) → one expansion per forecast step
-    """
-    is_tensor = False
-    device    = None
-    if isinstance(q10, torch.Tensor):
-        is_tensor = True
-        device    = q10.device
-        q10 = q10.detach().cpu().numpy()
-        q90 = q90.detach().cpu().numpy()
-
-    if np.isscalar(u_alpha):
-        q10_cal = q10 - u_alpha
-        q90_cal = q90 + u_alpha
-    else:
-        q10_cal = q10 - u_alpha[np.newaxis, :]
-        q90_cal = q90 + u_alpha[np.newaxis, :]
-
-    if is_tensor:
-        q10_cal = torch.from_numpy(q10_cal).to(device)
-        q90_cal = torch.from_numpy(q90_cal).to(device)
-
-    return q10_cal, q90_cal
 
 
 def quantile_loss(pred, target, q):

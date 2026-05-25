@@ -15,8 +15,8 @@ from torch.utils.data import DataLoader, Subset, TensorDataset
 # ──────────────────────────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-MODULE_DIR  = "Model_11"
-MODEL_NAME  = "Model_11"
+MODULE_DIR  = "Model_2_decoupled_no_detach"
+MODEL_NAME  = "Model_2_decoupled_no_detach"
 
 CHECKPOINT_CANDIDATES = (
     "model_decoupled.pt",
@@ -70,36 +70,36 @@ def _find_checkpoint(module_dir: str, run_subdir: str, explicit: Optional[str]) 
 # Data loading
 # ──────────────────────────────────────────────────────────────────────────────
 def load_splits(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
-    ds    = torch.load(dataset_path, weights_only=False)
-    full  = TensorDataset(ds["encoder"], ds["decoder"], ds["target"])
-    n     = len(full)
-    n_test    = int(n * test_ratio)
-    n_valcal  = int(n * (val_ratio + cal_ratio))
-    n_train   = n - n_valcal - n_test
-    i1, i2, i3 = n_train, n_train + n_valcal, n_train + n_valcal + n_test
-    return (
-        Subset(full, range(0,  i1)),   # train
-        Subset(full, range(i1, i2)),   # val/cal (same split)
-        Subset(full, range(i1, i2)),   # cal
-        Subset(full, range(i2, i3)),   # test
-        n_train, n_valcal, n_valcal, n_test,
+    """
+    Chronological split matching training:
+      train ≈ 66.7%  |  val+cal ≈ 16.7%  |  test ≈ 16.7%
+
+    cal_ratio is included so the test boundary is computed identically
+    to how it was during training, even though no cal_loader is created here.
+    """
+    ds   = torch.load(dataset_path, weights_only=False)
+    full = TensorDataset(ds["encoder"], ds["decoder"], ds["target"])
+    n    = len(full)
+
+    n_test   = int(n * test_ratio)
+    n_valcal = int(n * (val_ratio + cal_ratio))
+    n_train  = n - n_valcal - n_test
+
+    i1 = n_train
+    i2 = i1 + n_valcal
+    i3 = i2 + n_test
+
+    print(
+        f"Split sizes — train: {n_train}  val+cal: {n_valcal}  "
+        f"test: {n_test}  (total: {n})"
     )
 
-
-def split_settings_for_dataset(dataset_path):
-    """
-    Match split logic used in modelComparePlot.py:
-      - dataset.pt      : val/cal/test = 0.1 / 0.1 / 0.1 (val/cal overlap)
-      - synthetic sets  : val/cal/test = 1/12 / 1/12 / 1/6 (val/cal overlap)
-    """
-    name = os.path.basename(dataset_path)
-    if name == "dataset.pt":
-        return 0.10, 0.10, 0.10
-    if name in {"dataset_syn1.pt", "dataset_syn2.pt", "dataset_syn3.pt"}:
-        return 1 / 12, 1 / 12, 1 / 6
-
-    # Fallback keeps previous default behavior.
-    return 1 / 12, 1 / 12, 1 / 6
+    return (
+        Subset(full, range(0,  i1)),   # train
+        Subset(full, range(i1, i2)),   # val/cal
+        Subset(full, range(i2, i3)),   # test
+        n_train, n_valcal, n_test,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -136,21 +136,6 @@ def collect_preds(model, loader, device):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Conformal calibration
-# ──────────────────────────────────────────────────────────────────────────────
-def conformal_calibrate(q10, q50, q90, targets, alpha=0.1):
-    q10 = np.minimum(q10, q50)
-    q90 = np.maximum(q90, q50)
-    scores = np.maximum(np.maximum(q10 - targets, targets - q90), 0.0)
-    u = np.array([np.quantile(scores[:, t], 1 - alpha) for t in range(scores.shape[1])])
-    return u
-
-
-def apply_conformal(q10, q90, u):
-    return q10 - u[np.newaxis, :], q90 + u[np.newaxis, :]
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Metrics
 # ──────────────────────────────────────────────────────────────────────────────
 def rmse(actual, pred):
@@ -172,18 +157,17 @@ def winkler_score(q10, q90, targets, alpha=0.1):
     Per-sample, per-horizon Winkler score, then averaged.
     W = (U-L) + (2/α)·max(L-y, 0) + (2/α)·max(y-U, 0)
     """
-    width     = q90 - q10
-    pen_low   = np.maximum(q10 - targets, 0.0)
-    pen_high  = np.maximum(targets - q90, 0.0)
-    W         = width + (2.0 / alpha) * (pen_low + pen_high)
-    return W   # shape (n_samples, n_horizons)
+    width    = q90 - q10
+    pen_low  = np.maximum(q10 - targets, 0.0)
+    pen_high = np.maximum(targets - q90, 0.0)
+    return width + (2.0 / alpha) * (pen_low + pen_high)   # (n_samples, n_horizons)
 
 
 def interval_stats(q10, q90, targets):
     """Average interval width and normalized interval width."""
-    width        = q90 - q10                          # (n, H)
+    width        = q90 - q10
     avg_width    = float(np.mean(width))
-    avg_pred_abs = float(np.mean(np.abs(targets)))    # denominator for normalization
+    avg_pred_abs = float(np.mean(np.abs(targets)))
     norm_width   = avg_width / avg_pred_abs if avg_pred_abs > 0 else np.nan
     return avg_width, norm_width
 
@@ -194,27 +178,27 @@ def interval_stats(q10, q90, targets):
 def build_persistence(encoder_data, test_start, n_test, demand_mean, demand_std, n_horizons):
     enc_np   = _to_np(encoder_data)
     test_enc = enc_np[test_start:test_start + n_test]
-    last     = test_enc[:, -1, 0] * demand_std + demand_mean   # last known value
-    return np.tile(last[:, None], (1, n_horizons))              # (n_test, H)
+    last     = test_enc[:, -1, 0] * demand_std + demand_mean
+    return np.tile(last[:, None], (1, n_horizons))   # (n_test, H)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ─── PLOTS ───────────────────────────────────────────────────────────────────
 # ──────────────────────────────────────────────────────────────────────────────
 STYLE = dict(
-    model_color      = "#2563EB",   # blue
-    baseline_color   = "#DC2626",   # red
-    band_color       = "#93C5FD",   # light blue
-    nominal_color    = "#F59E0B",   # amber
-    cal_color        = "#16A34A",   # green
-    raw_color        = "#6B7280",   # grey
-    grid_alpha       = 0.25,
-    lw               = 1.8,
+    model_color    = "#2563EB",   # blue
+    baseline_color = "#DC2626",   # red
+    band_color     = "#93C5FD",   # light blue
+    nominal_color  = "#F59E0B",   # amber
+    cal_color      = "#16A34A",   # green
+    raw_color      = "#6B7280",   # grey
+    grid_alpha     = 0.25,
+    lw             = 1.8,
 )
 
 
 def _savefig(fig, path, dpi=150):
-    plt.tight_layout(rect=[0, 0, 1, 0.95])   # leave room for suptitle
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {path}")
@@ -222,15 +206,14 @@ def _savefig(fig, path, dpi=150):
 
 # 1. Error over forecast horizon ─────────────────────────────────────────────
 def plot_error_over_horizon(q50_h, tgt_h, persist_h, save_path):
-    H = q50_h.shape[1]
+    H     = q50_h.shape[1]
     hours = np.arange(1, H + 1)
 
-    rmse_model   = np.array([rmse(tgt_h[:, t], q50_h[:, t])     for t in range(H)])
-    mae_model    = np.array([mae (tgt_h[:, t], q50_h[:, t])      for t in range(H)])
-    rmse_persist = np.array([rmse(tgt_h[:, t], persist_h[:, t])  for t in range(H)])
-    mae_persist  = np.array([mae (tgt_h[:, t], persist_h[:, t])  for t in range(H)])
+    rmse_model   = np.array([rmse(tgt_h[:, t], q50_h[:, t])    for t in range(H)])
+    mae_model    = np.array([mae (tgt_h[:, t], q50_h[:, t])     for t in range(H)])
+    rmse_persist = np.array([rmse(tgt_h[:, t], persist_h[:, t]) for t in range(H)])
+    mae_persist  = np.array([mae (tgt_h[:, t], persist_h[:, t]) for t in range(H)])
 
-    # ── Console output ────────────────────────────────────────────────────────
     for metric_m, metric_b, name in [
         (rmse_model, rmse_persist, "RMSE"),
         (mae_model,  mae_persist,  "MAE"),
@@ -243,13 +226,10 @@ def plot_error_over_horizon(q50_h, tgt_h, persist_h, save_path):
         else:
             print(f"  [{name}] Model never beats persistence baseline.")
 
-    # ── Plot ──────────────────────────────────────────────────────────────────
-    # Build day-based x-ticks (every 24 h)
-    day_ticks      = np.arange(24, H + 1, 24)          # 24, 48, 72, …
+    day_ticks       = np.arange(24, H + 1, 24)
     day_tick_labels = [f"day {d // 24}" for d in day_ticks]
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 5))
-
     for ax, metric_m, metric_b, ylabel, title in [
         (axes[0], rmse_model, rmse_persist, "RMSE", "RMSE over Forecast Horizon"),
         (axes[1], mae_model,  mae_persist,  "MAE",  "MAE over Forecast Horizon"),
@@ -258,10 +238,8 @@ def plot_error_over_horizon(q50_h, tgt_h, persist_h, save_path):
                 lw=STYLE["lw"], label="Proposed model")
         ax.plot(hours, metric_b, color=STYLE["baseline_color"],
                 lw=STYLE["lw"], linestyle="--", label="Persistence baseline")
-
         ax.set_xticks(day_ticks)
         ax.set_xticklabels(day_tick_labels, rotation=45, ha="right")
-
         ax.set_xlabel("Forecast Horizon")
         ax.set_ylabel(ylabel)
         ax.set_title(title)
@@ -273,15 +251,15 @@ def plot_error_over_horizon(q50_h, tgt_h, persist_h, save_path):
 
 
 # 2. Reliability diagram ─────────────────────────────────────────────────────
-def plot_reliability_diagram(q10_cal, q90_cal, targets, alpha, save_path, model_name):
-    H = targets.shape[1]
+def plot_reliability_diagram(q10, q90, targets, alpha, save_path, model_name):
+    H        = targets.shape[1]
     horizons = np.arange(1, H + 1)
-    coverage = np.mean((targets >= q10_cal) & (targets <= q90_cal), axis=0) * 100
+    coverage = np.mean((targets >= q10) & (targets <= q90), axis=0) * 100
     nominal  = (1 - alpha) * 100
 
     fig, ax = plt.subplots(figsize=(14, 5))
     ax.plot(horizons, coverage, color=STYLE["cal_color"],
-            lw=STYLE["lw"], label="Empirical coverage (calibrated)")
+            lw=STYLE["lw"], label="Empirical coverage")
     ax.axhline(y=nominal, color=STYLE["nominal_color"],
                linestyle="--", lw=STYLE["lw"], label=f"Nominal {nominal:.0f}%")
     ax.fill_between(horizons, nominal, coverage,
@@ -290,7 +268,6 @@ def plot_reliability_diagram(q10_cal, q90_cal, targets, alpha, save_path, model_
     ax.fill_between(horizons, nominal, coverage,
                     where=(coverage >= nominal), alpha=0.12,
                     color=STYLE["model_color"], label="Over-coverage")
-
     ax.set_ylim(50, 100)
     ax.set_xlabel("Forecast Horizon (hours)")
     ax.set_ylabel("Coverage (%)")
@@ -319,6 +296,7 @@ def plot_train_val_loss(train_losses, val_losses, best_epoch, save_path, model_n
     _savefig(fig, save_path)
 
 
+# 4. Cosine similarity ────────────────────────────────────────────────────────
 def plot_cosine_similarity(cos_sims, save_path, model_name):
     fig, ax = plt.subplots(figsize=(14, 5))
     epochs = np.arange(1, len(cos_sims) + 1)
@@ -337,15 +315,13 @@ def plot_cosine_similarity(cos_sims, save_path, model_name):
     _savefig(fig, save_path)
 
 
-def plot_coverage_per_horizon(
-    q10_test, q90_test, tgt_test,
-    u_alpha_t, save_path, alpha=0.1
-):
+# 5. Coverage per horizon ─────────────────────────────────────────────────────
+def plot_coverage_per_horizon(q10_test, q90_test, tgt_test, save_path, alpha=0.1):
     raw_cov = np.mean((tgt_test >= q10_test) & (tgt_test <= q90_test), axis=0) * 100
     nominal = (1 - alpha) * 100
     gen_cov = float(np.mean((tgt_test >= q10_test) & (tgt_test <= q90_test)) * 100)
 
-    H = tgt_test.shape[1]
+    H          = tgt_test.shape[1]
     hours      = np.arange(1, H + 1)
     day_ticks  = np.arange(24, H + 1, 24)
     day_labels = [f"day {d // 24}" for d in day_ticks]
@@ -356,20 +332,18 @@ def plot_coverage_per_horizon(
                linestyle="--", lw=STYLE["lw"], label=f"Nominal {nominal:.0f}%")
     ax.axhline(y=gen_cov, color="steelblue", linestyle=":",
                lw=1.2, label=f"General coverage: {gen_cov:.2f}%")
-
     ax.set_xticks(day_ticks)
     ax.set_xticklabels(day_labels, rotation=45, ha="right")
     ax.set_ylim(75, 100)
     ax.set_xlabel("Forecast Horizon")
     ax.set_ylabel("Coverage (%)")
-    ax.set_title(f"Average Coverage per Horizon")
+    ax.set_title("Average Coverage per Horizon")
     ax.grid(True, alpha=STYLE["grid_alpha"])
     ax.legend(loc="lower left", fontsize=14)
-
     _savefig(fig, save_path)
 
 
-# 5. Actual vs predicted scatter ─────────────────────────────────────────────
+# 6. Actual vs predicted scatter ─────────────────────────────────────────────
 def plot_actual_vs_predicted(
     q50_h, tgt_h, encoder_data, train_size, val_size,
     demand_mean, demand_std, persist_h, save_path, model_name,
@@ -401,17 +375,17 @@ def plot_actual_vs_predicted(
     _savefig(fig, save_path)
 
 
-# 6. Test prediction windows ──────────────────────────────────────────────────
+# 7. Test prediction windows ──────────────────────────────────────────────────
 def plot_test_predictions(q10, q50, q90, targets, save_path, model_name):
-    n      = q50.shape[0]
-    idxs   = np.linspace(0, n - 1, min(3, n), dtype=int)
-    hours  = np.arange(1, q50.shape[1] + 1)
+    n     = q50.shape[0]
+    idxs  = np.linspace(0, n - 1, min(3, n), dtype=int)
+    hours = np.arange(1, q50.shape[1] + 1)
     fig, axes = plt.subplots(len(idxs), 1, figsize=(14, 4 * len(idxs)), squeeze=False)
     for ax, idx in zip(axes[:, 0], idxs):
-        m     = float(np.mean(np.abs(targets[idx] - q50[idx])))
-        cov   = float(np.mean((targets[idx] >= q10[idx]) & (targets[idx] <= q90[idx])) * 100)
-        ax.plot(hours, targets[idx], label="Actual", color="blue", lw=1.5)
-        ax.plot(hours, q50[idx],     label="Median (q50)", color="red", lw=1.5)
+        m   = float(np.mean(np.abs(targets[idx] - q50[idx])))
+        cov = float(np.mean((targets[idx] >= q10[idx]) & (targets[idx] <= q90[idx])) * 100)
+        ax.plot(hours, targets[idx], label="Actual",       color="blue", lw=1.5)
+        ax.plot(hours, q50[idx],     label="Median (q50)", color="red",  lw=1.5)
         ax.fill_between(hours, q10[idx], q90[idx],
                         color="red", alpha=0.18, label="Uncertainty band")
         ax.set_title(f"{model_name} – Test Window {idx}  (MAE={m:.4f}, Coverage={cov:.1f}%)")
@@ -424,14 +398,13 @@ def plot_test_predictions(q10, q50, q90, targets, save_path, model_name):
 # ──────────────────────────────────────────────────────────────────────────────
 # Console report
 # ──────────────────────────────────────────────────────────────────────────────
-def print_metrics(q50_h, tgt_h, persist_h, q10_eval_h, q90_eval_h, alpha,
+def print_metrics(q50_h, tgt_h, persist_h, q10_h, q90_h, alpha,
                   cov_min, cov_max, model_name):
     sep = "─" * 70
     print(f"\n{sep}")
     print(f"  NUMERIC RESULTS  –  {model_name}")
     print(sep)
 
-    # ── Error at key horizons ─────────────────────────────────────────────────
     print("\n[1] RMSE / MAE / R² at key horizons")
     print(f"{'Horizon':>10}  {'RMSE model':>12}  {'MAE model':>12}  {'R² model':>10}  "
           f"{'RMSE pers':>12}  {'MAE pers':>12}  {'R² pers':>10}")
@@ -442,27 +415,23 @@ def print_metrics(q50_h, tgt_h, persist_h, q10_eval_h, q90_eval_h, alpha,
               f"{rmse(a, m):>12.4f}  {mae(a, m):>12.4f}  {r2(a, m):>10.4f}  "
               f"{rmse(a, b):>12.4f}  {mae(a, b):>12.4f}  {r2(a, b):>10.4f}")
 
-    # ── Interval stats ────────────────────────────────────────────────────────
-    avg_w, norm_w = interval_stats(q10_eval_h, q90_eval_h, tgt_h)
+    avg_w, norm_w = interval_stats(q10_h, q90_h, tgt_h)
     avg_pred      = float(np.mean(q50_h))
-    print(f"\n[2] Interval statistics (raw / uncalibrated, full test set)")
+    print(f"\n[2] Interval statistics (raw, full test set)")
     print(f"    Average interval width (q90-q10) : {avg_w:.4f}")
     print(f"    Average prediction value (q50)   : {avg_pred:.4f}")
-    print(f"    Normalized interval width         : {norm_w:.4f}  "
-          f"(width / |avg target|)")
+    print(f"    Normalized interval width         : {norm_w:.4f}  (width / |avg target|)")
 
-    # ── Winkler score ─────────────────────────────────────────────────────────
-    W        = winkler_score(q10_eval_h, q90_eval_h, tgt_h, alpha=alpha)
-    avg_W    = float(np.mean(W))
-    per_h_W  = np.mean(W, axis=0)
-    print(f"\n[3] Winkler score  (α={alpha},  raw / uncalibrated intervals)")
+    W       = winkler_score(q10_h, q90_h, tgt_h, alpha=alpha)
+    avg_W   = float(np.mean(W))
+    per_h_W = np.mean(W, axis=0)
+    print(f"\n[3] Winkler score  (α={alpha},  raw intervals)")
     print(f"    Overall mean Winkler score        : {avg_W:.4f}")
     print(f"    Per key horizon:")
     for h_step, h_lbl in EVAL_HORIZONS.items():
         print(f"      {h_lbl:>6} : {per_h_W[h_step - 1]:.4f}")
 
-    # ── Reliability diagram extremes ──────────────────────────────────────────
-    print(f"\n[4] Reliability diagram (calibrated, per-horizon coverage)")
+    print(f"\n[4] Reliability diagram (per-horizon coverage)")
     print(f"    Min empirical coverage : {cov_min:.2f}%")
     print(f"    Max empirical coverage : {cov_max:.2f}%")
     print(f"    Nominal coverage       : {(1-alpha)*100:.1f}%")
@@ -474,20 +443,20 @@ def print_metrics(q50_h, tgt_h, persist_h, q10_eval_h, q90_eval_h, alpha,
 # Main
 # ──────────────────────────────────────────────────────────────────────────────
 def parse_args():
-    p = argparse.ArgumentParser(description="Evaluate Model_2 and generate all required outputs.")
-    p.add_argument("--dataset",       default="data/dataset.pt")
-    p.add_argument("--run-subdir",    default="original")
-    p.add_argument("--checkpoint",    default=None)
-    p.add_argument("--output-dir",    default=None)
-    p.add_argument("--conformal-alpha", type=float, default=None)
-    p.add_argument("--eval-batch-size", type=int,   default=512)
+    p = argparse.ArgumentParser(description="Evaluate model and generate all required outputs.")
+    p.add_argument("--dataset",           default="data/dataset.pt")
+    p.add_argument("--run-subdir",        default="original")
+    p.add_argument("--checkpoint",        default=None)
+    p.add_argument("--output-dir",        default=None)
+    p.add_argument("--conformal-alpha",   type=float, default=None)
+    p.add_argument("--eval-batch-size",   type=int,   default=512)
     return p.parse_args()
 
 
 def main():
     args = parse_args()
 
-    dataset_path   = _resolve(args.dataset)
+    dataset_path    = _resolve(args.dataset)
     checkpoint_path = _find_checkpoint(MODULE_DIR, args.run_subdir, args.checkpoint)
 
     if not os.path.isfile(dataset_path):
@@ -499,20 +468,20 @@ def main():
 
     model, config, ckpt = load_model(MODULE_DIR, checkpoint_path, device)
 
-    val_ratio, cal_ratio, test_ratio = split_settings_for_dataset(dataset_path)
+    # ── Split — identical to training ─────────────────────────────────────────
+    val_ratio  = 1 / 12
+    cal_ratio  = 1 / 12
+    test_ratio = 1 / 6
     print(
-        f"Split ratios (matching modelComparePlot): "
-        f"val={val_ratio:.6f}, cal={cal_ratio:.6f}, test={test_ratio:.6f}"
+        f"Split ratios: val={val_ratio:.6f}  cal={cal_ratio:.6f}  "
+        f"test={test_ratio:.6f}"
     )
 
-    (
-        _train_ds, _val_ds, cal_ds, test_ds,
-        train_size, val_size, cal_size, test_size,
-    ) = load_splits(
+    _train_ds, _val_ds, test_ds, train_size, val_size, test_size = load_splits(
         dataset_path,
-        val_ratio=val_ratio,
-        cal_ratio=cal_ratio,
-        test_ratio=test_ratio,
+        val_ratio  = val_ratio,
+        cal_ratio  = cal_ratio,
+        test_ratio = test_ratio,
     )
 
     def _loader(ds):
@@ -522,23 +491,12 @@ def main():
             num_workers=min(4, os.cpu_count() or 1),
         )
 
-    cal_loader  = _loader(cal_ds)
     test_loader = _loader(test_ds)
 
     alpha = args.conformal_alpha or float(ckpt.get("conformal_alpha", 0.1))
 
-    # ── Calibration ───────────────────────────────────────────────────────────
-    q10_cal_raw, q50_cal_raw, q90_cal_raw, tgt_cal = collect_preds(model, cal_loader, device)
-
-    if "conformal_u_alpha" in ckpt:
-        u_alpha_t = _to_np(ckpt["conformal_u_alpha"])
-    else:
-        print(f"[WARN] conformal_u_alpha missing; calibrating now (α={alpha}).")
-        u_alpha_t = conformal_calibrate(q10_cal_raw, q50_cal_raw, q90_cal_raw, tgt_cal, alpha)
-
-    # ── Test predictions ──────────────────────────────────────────────────────
+    # ── Predictions ───────────────────────────────────────────────────────────
     q10_raw, q50_raw, q90_raw, tgt_raw = collect_preds(model, test_loader, device)
-    q10_cf, q90_cf = apply_conformal(q10_raw, q90_raw, u_alpha_t)
 
     # ── De-normalise ──────────────────────────────────────────────────────────
     blob     = torch.load(dataset_path, weights_only=False)
@@ -548,11 +506,8 @@ def main():
 
     def dn(x): return x * d_std + d_mean
 
-    q10_h    = dn(q10_cf);      q50_h    = dn(q50_raw)
-    q90_h    = dn(q90_cf);      tgt_h    = dn(tgt_raw)
-    q10_raw_h = dn(q10_raw);    q90_raw_h = dn(q90_raw)
-    q10_c_h  = dn(q10_cal_raw); q90_c_h = dn(q90_cal_raw)
-    tgt_c_h  = dn(tgt_cal)
+    q10_h = dn(q10_raw);  q50_h = dn(q50_raw)
+    q90_h = dn(q90_raw);  tgt_h = dn(tgt_raw)
 
     # ── Persistence baseline ──────────────────────────────────────────────────
     persist_h = build_persistence(
@@ -592,15 +547,15 @@ def main():
     if not cos_sims:
         cos_sims = [0.0] * len(train_losses)
     plot_cosine_similarity(
-    cos_sims,
-    os.path.join(plot_dir, "cosine_similarity.png"),
-    MODEL_NAME,
-)
+        cos_sims,
+        os.path.join(plot_dir, "cosine_similarity.png"),
+        MODEL_NAME,
+    )
 
     plot_coverage_per_horizon(
-        q10_raw, q90_raw, tgt_raw,      # <-- test set, not cal
-        _to_np(u_alpha_t),
+        q10_raw, q90_raw, tgt_raw,
         os.path.join(plot_dir, "coverage_per_horizon.png"),
+        alpha=alpha,
     )
 
     plot_actual_vs_predicted(
@@ -617,7 +572,7 @@ def main():
     # ── Numeric report ────────────────────────────────────────────────────────
     print_metrics(
         q50_h, tgt_h, persist_h,
-        q10_raw_h, q90_raw_h, alpha,
+        q10_h, q90_h, alpha,
         cov_min, cov_max, MODEL_NAME,
     )
 

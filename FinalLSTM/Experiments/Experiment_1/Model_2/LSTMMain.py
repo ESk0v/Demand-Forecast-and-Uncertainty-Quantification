@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from LSTM.LSTMTraining import load_and_split_dataset, train_model
 from LSTM.GenerateREADME import generate_training_readme
 
-CONFORMAL_ALPHA = 0.60
+CONFORMAL_ALPHA = 0.50
 
 def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
     dataset_path    = filePaths[0]
@@ -16,13 +16,13 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
     run_dir = os.path.dirname(model_save_path)
     os.makedirs(run_dir, exist_ok=True)
 
-    train_dataset, val_dataset, cal_dataset, test_dataset, \
-        train_size, val_size, cal_size, test_size = load_and_split_dataset(dataset_path)
+    train_dataset, val_dataset, test_dataset, \
+        train_size, val_size, test_size = load_and_split_dataset(dataset_path)
 
-    n_total = train_size + val_size + cal_size + test_size
+    n_total = train_size + val_size + test_size
     logger.info(
         f"Dataset loaded: {train_size} train  {val_size} val  "
-        f"{cal_size} cal  {test_size} test  (total: {n_total})"
+        f"{test_size} test  (total: {n_total})"
     )
 
     config = Config()
@@ -43,14 +43,13 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
 
     train_loader = make_loader(train_dataset, shuffle=True,  batch_size=config.batch_size)
     val_loader   = make_loader(val_dataset,   shuffle=False, batch_size=config.batch_size * 8)
-    cal_loader   = make_loader(cal_dataset,   shuffle=False, batch_size=config.batch_size * 8)
 
     if device == "cuda":
         torch.cuda.empty_cache()
 
-    best_val_loss, train_losses, val_losses = train_model(
-        config, train_loader, val_loader, cal_loader,
-        train_size, val_size, cal_size,
+    train_model(
+        config, train_loader, val_loader,
+        train_size, val_size,
         model_save_path, logger,
         patience        = patience,
         conformal_alpha = CONFORMAL_ALPHA,
