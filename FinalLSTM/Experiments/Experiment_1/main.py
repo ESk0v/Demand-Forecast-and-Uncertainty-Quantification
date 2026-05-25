@@ -17,39 +17,39 @@ def set_seed(seed: int):
     torch.backends.cudnn.benchmark     = False
 
 MODEL_CONFIGS = [
-    dict(
-        name            = "10% target",
-        module_dir      = "Model_1",
-        dataset_path    = "Model_1/data/dataset.pt",
-        model_save_path = "Model_1/checkpoints/model.pt",
-        conformal_alpha = 0.90,   # 1 - 0.50
-        epochs          = 50,
-        patience        = 5,
-    ),
-    dict(
-        name            = "30% target",
-        module_dir      = "Model_2",
-        dataset_path    = "Model_2/data/dataset.pt",
-        model_save_path = "Model_2/checkpoints/model.pt",
-        conformal_alpha = 0.70,   # 1 - 0.60
-        epochs          = 50,
-        patience        = 5,
-    ),
-    dict(
-        name            = "50% target",
-        module_dir      = "Model_3",
-        dataset_path    = "Model_3/data/dataset.pt",
-        model_save_path = "Model_3/checkpoints/model.pt",
-        conformal_alpha = 0.50,   # 1 - 0.70
-        epochs          = 50,
-        patience        = 5,
-    ),
+    #dict(
+    #    name            = "10% target",
+    #    module_dir      = "Model_1",
+    #    dataset_path    = "Model_1/data/dataset.pt",
+    #    model_save_path = "Model_1/checkpoints/model.pt",
+    #    conformal_alpha = 0.90,   # 1 - 0.50
+    #    epochs          = 50,
+    #    patience        = 5,
+    #),
+    #dict(
+    #    name            = "30% target",
+    #    module_dir      = "Model_2",
+    #    dataset_path    = "Model_2/data/dataset.pt",
+    #    model_save_path = "Model_2/checkpoints/model.pt",
+    #    conformal_alpha = 0.70,   # 1 - 0.60
+    #    epochs          = 50,
+    #    patience        = 5,
+    #),
+    #dict(
+    #    name            = "50% target",
+    #    module_dir      = "Model_3",
+    #    dataset_path    = "Model_3/data/dataset.pt",
+    #    model_save_path = "Model_3/checkpoints/model.pt",
+    #    conformal_alpha = 0.50,   # 1 - 0.70
+    #    epochs          = 50,
+    #    patience        = 5,
+    #),
     dict(
         name            = "70% target",
         module_dir      = "Model_4",
         dataset_path    = "Model_4/data/dataset.pt",
         model_save_path = "Model_4/checkpoints/model.pt",
-        conformal_alpha = 0.70,   # 1 - 0.80
+        conformal_alpha = 0.30,   # 1 - 0.80
         epochs          = 50,
         patience        = 5,
     ),
@@ -58,7 +58,7 @@ MODEL_CONFIGS = [
         module_dir      = "Model_5",
         dataset_path    = "Model_5/data/dataset.pt",
         model_save_path = "Model_5/checkpoints/model.pt",
-        conformal_alpha = 0.90,   # 1 - 0.90
+        conformal_alpha = 0.10,   # 1 - 0.90
         epochs          = 50,
         patience        = 5,
     ),
