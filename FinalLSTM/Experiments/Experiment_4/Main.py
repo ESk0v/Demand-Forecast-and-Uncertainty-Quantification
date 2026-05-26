@@ -143,6 +143,7 @@ def train_one_model(cfg: dict):
     train_loader = make_loader(train_dataset, True,  config.batch_size)
     val_loader   = make_loader(val_dataset,   False, config.batch_size * 8)
     cal_loader   = make_loader(cal_dataset,   False, config.batch_size * 8)
+    test_loader  = make_loader(test_dataset,  False, config.batch_size * 8)
 
     os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
@@ -152,8 +153,8 @@ def train_one_model(cfg: dict):
     logger.info(f"[{cfg['name']}] Starting training …")
 
     train_model(
-        config, train_loader, val_loader, cal_loader,
-        train_size, val_size, cal_size,
+        config, train_loader, val_loader, cal_loader, test_loader,
+        train_size, val_size, cal_size, test_size,
         model_save_path,
         logger          = logger,
         patience        = cfg["patience"],

@@ -45,8 +45,8 @@ MODEL_CONFIGS = [
         dict(
         name            = "50% target",
         module_dir      = "Model_1",
-        dataset_path    = "Model_1/data/dataset.pt",
-        model_save_path = "Model_1/checkpoints/model.pt",
+        dataset_path    = "data/dataset.pt",
+        model_save_path = "Model_1/original/model.pt",
         conformal_alpha = 0.50,   # 1 - 0.50
         epochs          = 50,
         patience        = 5,
@@ -54,8 +54,8 @@ MODEL_CONFIGS = [
     dict(
         name            = "60% target",
         module_dir      = "Model_2",
-        dataset_path    = "Model_2/data/dataset.pt",
-        model_save_path = "Model_2/checkpoints/model.pt",
+        dataset_path    = "data/dataset.pt",
+        model_save_path = "Model_2/original/model.pt",
         conformal_alpha = 0.40,   # 1 - 0.60
         epochs          = 50,
         patience        = 5,
@@ -63,8 +63,8 @@ MODEL_CONFIGS = [
     dict(
         name            = "70% target",
         module_dir      = "Model_3",
-        dataset_path    = "Model_3/data/dataset.pt",
-        model_save_path = "Model_3/checkpoints/model.pt",
+        dataset_path    = "data/dataset.pt",
+        model_save_path = "Model_3/original/model.pt",
         conformal_alpha = 0.30,   # 1 - 0.70
         epochs          = 50,
         patience        = 5,
@@ -72,7 +72,7 @@ MODEL_CONFIGS = [
     #dict(
     #    name            = "80% target",
     #    module_dir      = "Model_4",
-    #    dataset_path    = "Model_4/data/dataset.pt",
+    #    dataset_path    = "data/dataset.pt",
     #    model_save_path = "Model_4/synthetic_data_1/model.pt",
     #    conformal_alpha = 0.20,   # 1 - 0.80
     #    epochs          = 50,
@@ -81,21 +81,21 @@ MODEL_CONFIGS = [
     #dict(
     #    name            = "90% target",
     #    module_dir      = "Model_5",
-    #    dataset_path    = "Model_5/data/dataset.pt",
+    #    dataset_path    = "data/dataset.pt",
     #    model_save_path = "Model_5/synthetic_data_1/model.pt",
     #    conformal_alpha = 0.10,   # 1 - 0.90
     #    epochs          = 50,
     #    patience        = 5,
     #),
-    dict(
-        name            = "90% target",
-        module_dir      = "Model_6",
-        dataset_path    = "Model_6/data/dataset.pt",
-        model_save_path = "Model_6/checkpoints/model.pt",
-        conformal_alpha = 0.10,   # 1 - 0.90
-        epochs          = 50,
-        patience        = 5,
-    ),
+    # dict(
+    #     name            = "90% target",
+    #     module_dir      = "Model_6",
+    #     dataset_path    = "data/dataset.pt",
+    #     model_save_path = "Model_6/original/model.pt",
+    #     conformal_alpha = 0.10,   # 1 - 0.90
+    #     epochs          = 50,
+    #     patience        = 5,
+    # ),
 ]
 
 # Number of nominal coverage levels to evaluate (spread 0 → 1)

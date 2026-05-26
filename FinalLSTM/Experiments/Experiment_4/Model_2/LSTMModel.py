@@ -147,8 +147,8 @@ class LSTMForecast(nn.Module):
         decoder_output     = self.dropout(decoder_output)
         q50                = self.fc_decoderMedian(decoder_output).squeeze(-1)
 
-        unc_hidden = self.uncertainty_hidden_proj(hidden.detach())
-        unc_cell = self.uncertainty_cell_proj(cell.detach())
+        unc_hidden = self.uncertainty_hidden_proj(hidden)
+        unc_cell = self.uncertainty_cell_proj(cell)
 
         spread_output, _ = self.uncertaintyDecoderLstm(decoder_input, (unc_hidden, unc_cell))
         spread_output     = self.dropout(spread_output)

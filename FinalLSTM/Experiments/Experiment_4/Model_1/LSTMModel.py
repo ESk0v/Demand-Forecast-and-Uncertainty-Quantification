@@ -139,7 +139,7 @@ class LSTMForecast(nn.Module):
         decoder_output     = self.dropout(decoder_output)
         q50                = self.fc_decoderMedian(decoder_output).squeeze(-1)
 
-        spread_output, _ = self.uncertaintyDecoderLstm(decoder_input, (hidden.detach(), cell.detach()))
+        spread_output, _ = self.uncertaintyDecoderLstm(decoder_input, (hidden, cell))
         spread_output     = self.dropout(spread_output)
 
         spread_lo = nn.functional.softplus(self.fc_uncertaintyDecoderLow(spread_output).squeeze(-1))

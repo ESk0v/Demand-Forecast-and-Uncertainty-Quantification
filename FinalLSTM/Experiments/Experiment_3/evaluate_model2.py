@@ -69,10 +69,10 @@ def _find_checkpoint(module_dir: str, run_subdir: str, explicit: Optional[str]) 
 # ──────────────────────────────────────────────────────────────────────────────
 # Data loading
 # ──────────────────────────────────────────────────────────────────────────────
-def load_splits(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
+def load_splits(dataset_path, val_ratio=1/10, cal_ratio=1/10, test_ratio=1/10):
     """
-    Chronological split matching training:
-      train ≈ 66.7%  |  val+cal ≈ 16.7%  |  test ≈ 16.7%
+    Chronological split:
+      default: train = 70%  |  val+cal = 20%  |  test = 10%
 
     cal_ratio is included so the test boundary is computed identically
     to how it was during training, even though no cal_loader is created here.
@@ -100,6 +100,17 @@ def load_splits(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
         Subset(full, range(i2, i3)),   # test
         n_train, n_valcal, n_test,
     )
+
+
+def split_ratios_for_dataset(dataset_path: str):
+    """
+    Split policy:
+      - dataset.pt            -> val/cal/test = 0.1 / 0.1 / 0.1
+      - any other dataset .pt -> val/cal/test = 1/12 / 1/12 / 1/6
+    """
+    if os.path.basename(dataset_path) == "dataset.pt":
+        return 0.1, 0.1, 0.1
+    return (1 / 12), (1 / 12), (1 / 6)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -468,10 +479,8 @@ def main():
 
     model, config, ckpt = load_model(MODULE_DIR, checkpoint_path, device)
 
-    # ── Split — identical to training ─────────────────────────────────────────
-    val_ratio  = 1 / 12
-    cal_ratio  = 1 / 12
-    test_ratio = 1 / 6
+    # ── Split policy by dataset type ──────────────────────────────────────────
+    val_ratio, cal_ratio, test_ratio = split_ratios_for_dataset(dataset_path)
     print(
         f"Split ratios: val={val_ratio:.6f}  cal={cal_ratio:.6f}  "
         f"test={test_ratio:.6f}"
