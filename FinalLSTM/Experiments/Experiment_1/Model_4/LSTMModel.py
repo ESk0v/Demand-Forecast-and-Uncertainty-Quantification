@@ -83,7 +83,7 @@ class LSTMForecast(nn.Module):
 
         self.uncertaintyDecoderLstm = nn.LSTM(
             input_size=config.decoder_features,
-            hidden_size=config.hidden_size, #// 2,
+            hidden_size=config.hidden_size,
             num_layers=1,
             batch_first=True,
             dropout=0.0
@@ -96,6 +96,7 @@ class LSTMForecast(nn.Module):
         self.fc_uncertaintyDecoderLow       = nn.Linear(config.hidden_size, 1) #// 2, 1)  # q50 - spread_lo = q10
         self.fc_uncertaintyDecoderHigh      = nn.Linear(config.hidden_size, 1) #// 2, 1)  # q50 + spread_hi = q90
 
+        self.uncertainty_cell_proj   = nn.Linear(config.hidden_size, config.hidden_size)
         self._init_weights()
 
     def _init_weights(self):
@@ -124,6 +125,11 @@ class LSTMForecast(nn.Module):
             elif any(x in name for x in ['fc_decoderMedian.bias', 'fc_uncertaintyDecoderLow.bias', 'fc_uncertaintyDecoderHigh.bias']):
                 nn.init.constant_(param.data, 0)
 
+            elif name in ('uncertainty_cell_proj.weight'):
+                nn.init.eye_(param.data)
+            elif name in ('uncertainty_cell_proj.bias'):
+                nn.init.constant_(param.data, 0)
+
             elif 'ramp_layer.weight' in name:
                 nn.init.constant_(param.data, 2.0)   # sigmoid(2x) starts resembling a 0→1 ramp
             elif 'ramp_layer.bias' in name:
@@ -139,7 +145,13 @@ class LSTMForecast(nn.Module):
         decoder_output     = self.dropout(decoder_output)
         q50                = self.fc_decoderMedian(decoder_output).squeeze(-1)
 
-        spread_output, _ = self.uncertaintyDecoderLstm(decoder_input, (hidden.detach(), cell.detach()))
+        unc_hidden = torch.tanh(
+            self.uncertainty_cell_proj(cell)
+        )
+
+        unc_cell = torch.zeros_like(unc_hidden)
+
+        spread_output, _ = self.uncertaintyDecoderLstm(decoder_input, (unc_hidden, unc_cell))
         spread_output     = self.dropout(spread_output)
 
         spread_lo = nn.functional.softplus(self.fc_uncertaintyDecoderLow(spread_output).squeeze(-1))
@@ -154,6 +166,3 @@ class LSTMForecast(nn.Module):
         q90 = q50 + spread_hi * ramp
 
         return q10, q50, q90
-
-
-#Config.load_from_file()

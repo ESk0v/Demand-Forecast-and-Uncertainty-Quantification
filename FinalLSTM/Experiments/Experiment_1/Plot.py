@@ -144,7 +144,7 @@ def load_model_predictions(cfg: dict) -> dict:
         )
 
     # Load dataset — we only need the test split
-    (_, _, test_dataset, _, _, _) = load_and_split_dataset(
+    (_, _,_, test_dataset, _,_, _, _) = load_and_split_dataset(
         dataset_path, val_ratio=0.1, test_ratio=0.1
     )
 
