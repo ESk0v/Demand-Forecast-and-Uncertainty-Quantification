@@ -103,6 +103,7 @@ def main():
         {"name": "Model_1", "dir": "Model_1", "ckpt": "Model_1/original/model.pt"},
         {"name": "Model_2", "dir": "Model_2", "ckpt": "Model_2/original/model.pt"},
         {"name": "Model_3", "dir": "Model_3", "ckpt": "Model_3/original/model.pt"},
+        {"name": "Model_4", "dir": "Model_4", "ckpt": "Model_4/original/model.pt"},
     ]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"

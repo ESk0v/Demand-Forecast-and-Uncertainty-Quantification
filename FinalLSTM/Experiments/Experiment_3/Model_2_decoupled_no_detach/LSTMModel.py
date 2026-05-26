@@ -83,7 +83,7 @@ class LSTMForecast(nn.Module):
 
         self.uncertaintyDecoderLstm = nn.LSTM(
             input_size=config.decoder_features,
-            hidden_size=config.hidden_size // 2, #// 2,
+            hidden_size=config.hidden_size, #// 2,
             num_layers=1,
             batch_first=True,
             dropout=0.0
@@ -93,10 +93,10 @@ class LSTMForecast(nn.Module):
         self.context_dropout                = nn.Dropout(config.context_dropout)
         self.ramp_layer                     = nn.Linear(1, 1)
         self.fc_decoderMedian               = nn.Linear(config.hidden_size, 1)
-        self.fc_uncertaintyDecoderLow       = nn.Linear(config.hidden_size // 2, 1) #// 2, 1)  # q50 - spread_lo = q10
-        self.fc_uncertaintyDecoderHigh      = nn.Linear(config.hidden_size // 2, 1) #// 2, 1)  # q50 + spread_hi = q90
+        self.fc_uncertaintyDecoderLow       = nn.Linear(config.hidden_size, 1) #// 2, 1)  # q50 - spread_lo = q10
+        self.fc_uncertaintyDecoderHigh      = nn.Linear(config.hidden_size, 1) #// 2, 1)  # q50 + spread_hi = q90
 
-        self.uncertainty_cell_proj   = nn.Linear(config.hidden_size, config.hidden_size // 2)
+        self.uncertainty_cell_proj   = nn.Linear(config.hidden_size, config.hidden_size)
         self._init_weights()
 
     def _init_weights(self):
