@@ -108,8 +108,6 @@ def split_ratios_for_dataset(dataset_path: str):
       - dataset.pt            -> val/cal/test = 0.1 / 0.1 / 0.1
       - any other dataset .pt -> val/cal/test = 1/12 / 1/12 / 1/6
     """
-    if os.path.basename(dataset_path) == "dataset.pt":
-        return 0.1, 0.1, 0.1
     return (1 / 12), (1 / 12), (1 / 6)
 
 

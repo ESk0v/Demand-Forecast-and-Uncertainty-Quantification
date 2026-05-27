@@ -100,10 +100,10 @@ def main():
     demand_std = float(dataset_blob.get("demand_std", 1.0))
 
     model_configs = [
-        {"name": "Model_1", "dir": "Model_1", "ckpt": "Model_1/original/model.pt"},
-        {"name": "Model_2", "dir": "Model_2", "ckpt": "Model_2/original/model.pt"},
+        # {"name": "Model_1", "dir": "Model_1", "ckpt": "Model_1/original/model.pt"},
+        # {"name": "Model_2", "dir": "Model_2", "ckpt": "Model_2/original/model.pt"},
         {"name": "Model_3", "dir": "Model_3", "ckpt": "Model_3/original/model.pt"},
-        {"name": "Model_4", "dir": "Model_4", "ckpt": "Model_4/original/model.pt"},
+        # {"name": "Model_4", "dir": "Model_4", "ckpt": "Model_4/original/model.pt"},
     ]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -124,7 +124,7 @@ def main():
 
         model, checkpoint = _load_checkpoint_model(lstm_model, checkpoint_path, device)
 
-        alpha = float(checkpoint.get("conformal_alpha", 0.1))
+        alpha = 0.3 #float(checkpoint.get("conformal_alpha", 0.1))
 
         batch_size = getattr(lstm_model.Config, "batch_size", 64)
         test_loader = DataLoader(

@@ -51,15 +51,15 @@ MODEL_CONFIGS = [
        epochs          = 20,
        patience        = 5,
     ),
-    # dict(
-    #    name            = "30% target",
-    #    module_dir      = "Model_2",
-    #    dataset_path    = "data/dataset.pt",
-    #    model_save_path = "Model_2/original/model.pt",
-    #    conformal_alpha = 0.70,   # 1 - 0.70
-    #    epochs          = 20,
-    #    patience        = 5,
-    # ),
+    dict(
+       name            = "30% target",
+       module_dir      = "Model_2",
+       dataset_path    = "data/dataset.pt",
+       model_save_path = "Model_2/original/model.pt",
+       conformal_alpha = 0.70,   # 1 - 0.70
+       epochs          = 20,
+       patience        = 5,
+    ),
     dict(
         name            = "50% target",
         module_dir      = "Model_3",
