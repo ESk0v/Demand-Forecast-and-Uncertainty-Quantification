@@ -8,7 +8,17 @@ from torch.utils.data import TensorDataset, Subset
 from LSTMModel import LSTMForecast
 
 
-def load_and_split_dataset(dataset_path, val_ratio=1 / 12, cal_ratio=1 / 12, test_ratio=1 / 6):
+def _split_ratios_for_dataset(dataset_path):
+    dataset_name = os.path.basename(dataset_path)
+    if dataset_name == "dataset.pt":
+        return 1 / 10, 1 / 10, 1 / 10
+    return 1 / 12, 1 / 12, 1 / 6
+
+
+def load_and_split_dataset(dataset_path, val_ratio=None, cal_ratio=None, test_ratio=None):
+    if val_ratio is None or cal_ratio is None or test_ratio is None:
+        val_ratio, cal_ratio, test_ratio = _split_ratios_for_dataset(dataset_path)
+
     dataset = torch.load(dataset_path, weights_only=False)
 
     encoder_data = dataset["encoder"]

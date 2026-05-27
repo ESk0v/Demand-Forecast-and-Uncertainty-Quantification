@@ -11,15 +11,27 @@ from LSTMModel import LSTMForecast
 
 # ─── Dataset ──────────────────────────────────────────────────────────────────
 
-def load_and_split_dataset(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
+def _split_ratios_for_dataset(dataset_path):
+    dataset_name = os.path.basename(dataset_path)
+    if dataset_name == "dataset.pt":
+        return 1 / 10, 1 / 10, 1 / 10
+    return 1 / 12, 1 / 12, 1 / 6
+
+
+def load_and_split_dataset(dataset_path, val_ratio=None, cal_ratio=None, test_ratio=None):
     """
     Chronological 4-way split — no data leakage.
 
     val and cal draw from the same pool so neither touches model weights,
     giving a larger, more representative calibration set.
 
-    Effective proportions:  train=70%  val=20%  cal=10%  test=10%
+    Effective proportions by dataset:
+      dataset.pt       -> train=70%  val=20%  cal=20%(same rows as val)  test=10%
+      dataset_syn*.pt  -> train=66.7%  val=16.7%  cal=16.7%(same rows as val)  test=16.7%
     """
+    if val_ratio is None or cal_ratio is None or test_ratio is None:
+        val_ratio, cal_ratio, test_ratio = _split_ratios_for_dataset(dataset_path)
+
     dataset = torch.load(dataset_path, weights_only=False)
 
     full_dataset = TensorDataset(
