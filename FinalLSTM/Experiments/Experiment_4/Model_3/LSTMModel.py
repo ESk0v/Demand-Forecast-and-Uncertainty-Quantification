@@ -158,11 +158,11 @@ class LSTMForecast(nn.Module):
         spread_hi = nn.functional.softplus(self.fc_uncertaintyDecoderHigh(spread_output).squeeze(-1))
 
         horizon_steps = decoder_input.shape[1]
-        ramp = torch.sigmoid(self.ramp_layer(
+        sigmoidGate= torch.sigmoid(self.ramp_layer(
             torch.linspace(0, 1, horizon_steps, device=decoder_input.device).unsqueeze(-1)
         )).squeeze(-1).unsqueeze(0)
 
-        q10 = q50 - spread_lo * ramp
-        q90 = q50 + spread_hi * ramp
+        q10 = q50 - spread_lo * sigmoidGate
+        q90 = q50 + spread_hi * sigmoidGate
 
         return q10, q50, q90

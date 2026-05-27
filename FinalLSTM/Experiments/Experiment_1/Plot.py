@@ -42,51 +42,51 @@ from torch.utils.data import DataLoader
 #    conformal_alpha – 1 – target_coverage stored in the checkpoint
 #
 MODEL_CONFIGS = [
-        dict(
-        name            = "10% target",
-        module_dir      = "Model_1",
+    #dict(
+    #    name            = "10% target",
+    #    module_dir      = "Model_1",
+    #    dataset_path    = "data/dataset.pt",
+    #    model_save_path = "Model_1/original/model.pt",
+    #    conformal_alpha = 0.90,   # 1 - 0.90
+    #    epochs          = 20,
+    #    patience        = 5,
+    #),
+    #dict(
+    #    name            = "30% target",
+    #    module_dir      = "Model_2",
+    #    dataset_path    = "data/dataset.pt",
+    #    model_save_path = "Model_2/original/model.pt",
+    #    conformal_alpha = 0.70,   # 1 - 0.70
+    #    epochs          = 20,
+    #    patience        = 5,
+    #),
+    dict(
+        name            = "50% target",
+        module_dir      = "Model_3",
         dataset_path    = "data/dataset.pt",
-        model_save_path = "Model_1/original/model.pt",
-        conformal_alpha = 0.90,   # 1 - 0.90
+        model_save_path = "Model_3/original/model.pt",
+        conformal_alpha = 0.50,   # 1 - 0.50
         epochs          = 20,
         patience        = 5,
     ),
     dict(
-        name            = "30% target",
-        module_dir      = "Model_2",
+        name            = "70% target",
+        module_dir      = "Model_4",
         dataset_path    = "data/dataset.pt",
-        model_save_path = "Model_2/original/model.pt",
-        conformal_alpha = 0.70,   # 1 - 0.70
+        model_save_path = "Model_4/original/model.pt",
+        conformal_alpha = 0.30,   # 1 - 0.30
         epochs          = 20,
         patience        = 5,
     ),
-    # dict(
-    #     name            = "50% target",
-    #     module_dir      = "Model_3",
-    #     dataset_path    = "data/dataset.pt",
-    #     model_save_path = "Model_3/original/model.pt",
-    #     conformal_alpha = 0.50,   # 1 - 0.50
-    #     epochs          = 20,
-    #     patience        = 5,
-    # ),
-    # dict(
-    #     name            = "70% target",
-    #     module_dir      = "Model_4",
-    #     dataset_path    = "data/dataset.pt",
-    #     model_save_path = "Model_4/original/model.pt",
-    #     conformal_alpha = 0.30,   # 1 - 0.30
-    #     epochs          = 20,
-    #     patience        = 5,
-    # ),
-    # dict(
-    #     name            = "90% target",
-    #     module_dir      = "Model_5",
-    #     dataset_path    = "data/dataset.pt",
-    #     model_save_path = "Model_5/original/model.pt",
-    #     conformal_alpha = 0.10,   # 1 - 0.10
-    #     epochs          = 20,
-    #     patience        = 5,
-    # ),
+    dict(
+        name            = "90% target",
+        module_dir      = "Model_5",
+        dataset_path    = "data/dataset.pt",
+        model_save_path = "Model_5/original/model.pt",
+        conformal_alpha = 0.10,   # 1 - 0.10
+        epochs          = 20,
+        patience        = 5,
+    ),
 ]
 
 # How many test samples per "week" for the box-plot breakdown.
@@ -199,11 +199,6 @@ def raw_coverage_boxplot_stats(
     targets: np.ndarray,
     samples_per_week: Optional[int] = None,
 ) -> dict:
-    """
-    Compute raw interval coverage from model outputs:
-      covered = (q10 <= y <= q90)
-    Then aggregate weekly stats: mean, q25, q75, min, max.
-    """
     N, H = targets.shape
 
     covered = (targets >= q10_raw) & (targets <= q90_raw)  # (N, H)
