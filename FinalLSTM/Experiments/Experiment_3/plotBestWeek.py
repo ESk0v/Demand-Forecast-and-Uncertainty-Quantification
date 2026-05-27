@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import csv
+import argparse
 from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
@@ -8,6 +9,16 @@ import numpy as np
 import torch
 from matplotlib.lines import Line2D
 from torch.utils.data import DataLoader, TensorDataset
+
+plt.rcParams.update({
+    "font.size": 14,
+    "axes.titlesize": 16,
+    "axes.labelsize": 12,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    "legend.fontsize": 14,
+    "legend.title_fontsize": 16,
+})
 
 
 MODEL_DIR = "Model_2_decoupled_no_detach"
@@ -26,7 +37,6 @@ ALPHA = 0.10
 WEIGHT_MAE = 1.0
 WEIGHT_WINKLER = 1.0
 WEIGHT_COVERAGE = 2.5
-WEIGHT_COVERAGE_MAD = 2.5
 
 # Hard-coded exclusions from best-week search (test-set row indices).
 EXCLUDED_TEST_INDICES = set(range(160, 331)) | set(range(570, 701))
@@ -120,13 +130,6 @@ def _week_winkler(q_low, q_high, target, alpha):
     return float(np.mean(width + penalty_low + penalty_high))
 
 
-def _week_coverage_mad(q10, q90, target, alpha):
-    target_coverage = (1.0 - alpha) * 100.0
-    covered = ((target >= q10) & (target <= q90)).astype(np.float64)
-    per_horizon_coverage = covered * 100.0
-    return float(np.mean(np.abs(per_horizon_coverage - target_coverage)))
-
-
 def _week_coverage_percent(q10, q90, target):
     covered = (target >= q10) & (target <= q90)
     return float(np.mean(covered) * 100.0)
@@ -160,7 +163,7 @@ def _map_dataset_index_to_datetime(datetimes, dataset_index: int, dataset_total:
 
 
 def _plot_week(save_path, q10, q50, q90, target, week_idx, metrics, date_start, date_end):
-    hours = np.arange(1, len(target) + 1)
+    hours = np.arange(len(target))
     plt.figure(figsize=(14, 6))
     plt.plot(hours, target, color="blue", linewidth=1.5, label="Actual")
     plt.plot(hours, q50, color="red", linewidth=1.5, label="Median (q50)")
@@ -168,15 +171,18 @@ def _plot_week(save_path, q10, q50, q90, target, week_idx, metrics, date_start, 
     plt.title(
         f"Date range: {date_start.strftime('%Y-%m-%d %H:%M')} to {date_end.strftime('%Y-%m-%d %H:%M')}"
     )
-    plt.xlabel("Forecast Horizon (hours)")
-    plt.ylabel("Demand")
+    plt.xlabel("Forecast Horizon (hours)", fontsize=12)
+    plt.ylabel("Demand", fontsize=12)
+    day_ticks = [24, 48, 72, 96, 120, 144, 168]
+    day_labels = [f"Day {d}" for d in range(1, 8)]
+    plt.xlim(0, 168)
+    plt.xticks(day_ticks, day_labels)
     plt.grid(True, alpha=0.3)
     data_legend = plt.legend(loc="upper left")
     metric_handles = [
         Line2D([], [], color="none", label=f"MAE: {metrics['mae']:.4f}"),
         Line2D([], [], color="none", label=f"Winkler: {metrics['winkler']:.4f}"),
         Line2D([], [], color="none", label=f"Coverage: {metrics['coverage']:.2f}%"),
-        Line2D([], [], color="none", label=f"Coverage MAD: {metrics['coverage_mad']:.4f}"),
     ]
     plt.gca().add_artist(data_legend)
     plt.legend(
@@ -194,6 +200,15 @@ def _plot_week(save_path, q10, q50, q90, target, week_idx, metrics, date_start, 
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Plot best (or manually selected) test week for Model_2.")
+    parser.add_argument(
+        "--test-index",
+        type=int,
+        default=None,
+        help="Manually select a test-set index (overrides automatic best-week selection).",
+    )
+    args = parser.parse_args()
+
     checkpoint_path = _abs(CHECKPOINT_REL)
     dataset_path = _abs(DATASET_REL)
     date_source_csv_path = _abs(DATE_SOURCE_CSV_REL)
@@ -226,7 +241,6 @@ def main():
     winkler_week = np.zeros(n_weeks, dtype=np.float64)
     coverage_week = np.zeros(n_weeks, dtype=np.float64)
     coverage_err_week = np.zeros(n_weeks, dtype=np.float64)
-    coverage_mad_week = np.zeros(n_weeks, dtype=np.float64)
     target_coverage = (1.0 - ALPHA) * 100.0
 
     for i in range(n_weeks):
@@ -234,25 +248,31 @@ def main():
         winkler_week[i] = _week_winkler(q10_h[i], q90_h[i], tgt_h[i], alpha=ALPHA)
         coverage_week[i] = _week_coverage_percent(q10[i], q90[i], tgt[i])
         coverage_err_week[i] = abs(coverage_week[i] - target_coverage)
-        coverage_mad_week[i] = _week_coverage_mad(q10[i], q90[i], tgt[i], alpha=ALPHA)
 
-    combined_rank_score = (
-        WEIGHT_MAE * _rank_score(mae_week)
-        + WEIGHT_WINKLER * _rank_score(winkler_week)
-        + WEIGHT_COVERAGE * _rank_score(coverage_err_week)
-        + WEIGHT_COVERAGE_MAD * _rank_score(coverage_mad_week)
-    )
+    if args.test_index is not None:
+        if not (0 <= args.test_index < n_weeks):
+            raise ValueError(f"--test-index must be in [0, {n_weeks - 1}], got {args.test_index}")
+        best_idx = int(args.test_index)
+        selection_mode = "manual"
+    else:
+        combined_rank_score = (
+            WEIGHT_MAE * _rank_score(mae_week)
+            + WEIGHT_WINKLER * _rank_score(winkler_week)
+            + WEIGHT_COVERAGE * _rank_score(coverage_err_week)
+        )
 
-    eligible_mask = np.ones(n_weeks, dtype=bool)
-    for idx in EXCLUDED_TEST_INDICES:
-        if 0 <= idx < n_weeks:
-            eligible_mask[idx] = False
+        eligible_mask = np.ones(n_weeks, dtype=bool)
+        for idx in EXCLUDED_TEST_INDICES:
+            if 0 <= idx < n_weeks:
+                eligible_mask[idx] = False
 
-    if not np.any(eligible_mask):
-        raise RuntimeError("No eligible test weeks left after applying exclusions.")
+        if not np.any(eligible_mask):
+            raise RuntimeError("No eligible test weeks left after applying exclusions.")
 
-    masked_score = np.where(eligible_mask, combined_rank_score, np.inf)
-    best_idx = int(np.argmin(masked_score))
+        masked_score = np.where(eligible_mask, combined_rank_score, np.inf)
+        best_idx = int(np.argmin(masked_score))
+        selection_mode = "auto"
+
     dataset_idx = split_info["test_start"] + best_idx
     datetimes = _load_datetime_series(date_source_csv_path)
     date_start = _map_dataset_index_to_datetime(
@@ -267,7 +287,6 @@ def main():
         "winkler": float(winkler_week[best_idx]),
         "coverage": float(coverage_week[best_idx]),
         "coverage_err": float(coverage_err_week[best_idx]),
-        "coverage_mad": float(coverage_mad_week[best_idx]),
     }
 
     _plot_week(
@@ -284,7 +303,11 @@ def main():
 
     print("Best-week evaluation (Model_2_decoupled_no_detach/original/model.pt)")
     print("------------------------------------------------------------")
-    print(f"Excluded test indices: {sorted(EXCLUDED_TEST_INDICES)}")
+    if selection_mode == "auto":
+        print(f"Selection mode: auto (excluded indices applied)")
+        print(f"Excluded test indices: {sorted(EXCLUDED_TEST_INDICES)}")
+    else:
+        print("Selection mode: manual (--test-index override)")
     print(
         f"Split sizes — train: {split_info['train_size']}  val: {split_info['val_size']}  "
         f"cal: {split_info['cal_size']}  test: {split_info['test_size']}  (total: {split_info['n_total']})"
@@ -294,7 +317,6 @@ def main():
     print(f"Best-week Mean Winkler Score: {metrics['winkler']:.6f}")
     print(f"Best-week Coverage: {metrics['coverage']:.6f}% (target: {target_coverage:.2f}%)")
     print(f"Best-week Coverage Error |Coverage-Target|: {metrics['coverage_err']:.6f}")
-    print(f"Best-week Coverage MAD: {metrics['coverage_mad']:.6f}")
     print(f"Best-week Date range: {date_start} to {date_end}")
 
     ckpt_alpha = checkpoint.get("conformal_alpha", None)

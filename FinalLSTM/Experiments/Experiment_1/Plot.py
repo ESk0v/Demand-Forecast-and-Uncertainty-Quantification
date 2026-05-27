@@ -42,16 +42,16 @@ from torch.utils.data import DataLoader
 #    conformal_alpha – 1 – target_coverage stored in the checkpoint
 #
 MODEL_CONFIGS = [
-    #dict(
-    #    name            = "10% target",
-    #    module_dir      = "Model_1",
-    #    dataset_path    = "data/dataset.pt",
-    #    model_save_path = "Model_1/original/model.pt",
-    #    conformal_alpha = 0.90,   # 1 - 0.90
-    #    epochs          = 20,
-    #    patience        = 5,
-    #),
-    #dict(
+    dict(
+       name            = "10% target",
+       module_dir      = "Model_1",
+       dataset_path    = "data/dataset.pt",
+       model_save_path = "Model_1/original/model.pt",
+       conformal_alpha = 0.90,   # 1 - 0.90
+       epochs          = 20,
+       patience        = 5,
+    ),
+    # dict(
     #    name            = "30% target",
     #    module_dir      = "Model_2",
     #    dataset_path    = "data/dataset.pt",
@@ -59,7 +59,7 @@ MODEL_CONFIGS = [
     #    conformal_alpha = 0.70,   # 1 - 0.70
     #    epochs          = 20,
     #    patience        = 5,
-    #),
+    # ),
     dict(
         name            = "50% target",
         module_dir      = "Model_3",
@@ -214,6 +214,7 @@ def raw_coverage_boxplot_stats(
     return dict(
         weekly_mean=float(weekly.mean()),
         general_coverage=float(covered.mean()),
+        coverage_per_h=covered.mean(axis=0) * 100.0,
         q25=float(np.percentile(weekly, 25)),
         q75=float(np.percentile(weekly, 75)),
         wmin=float(weekly.min()),
@@ -268,7 +269,7 @@ def plot_reliability(results: list, output_path: str):
     box_width = 3.0   # width in % units on the x-axis
 
     print("\n" + "─" * 72)
-    print(f"  {'Model':<20} | {'Target':>8} | {'Min':>8} | {'Mean':>8} | {'Max':>8}")
+    print(f"  {'Model':<20} | {'Target':>8} | {'Min':>8} | {'Mean':>8} | {'Max':>8} | {'CovMAD':>8}")
     print("─" * 72)
 
     for model_idx, res in enumerate(results):
@@ -286,8 +287,13 @@ def plot_reliability(results: list, output_path: str):
         wmin = stats["wmin"] * 100
         wmax = stats["wmax"] * 100
         xc   = nominal_target
+        coverage_mad = float(np.mean(np.abs(stats["coverage_per_h"] - nominal_target)))
 
-        print(f"  {res['name']:<20} | Target: {nominal_target:5.1f}% | Min: {wmin:5.1f}% | Mean: {mean:5.1f}% | Max: {wmax:5.1f}%")
+        print(
+            f"  {res['name']:<20} | Target: {nominal_target:5.1f}% | "
+            f"Min: {wmin:5.1f}% | Mean: {mean:5.1f}% | Max: {wmax:5.1f}% | "
+            f"MAD: {coverage_mad:5.2f}"
+        )
 
         label = (f"{res['name']}"
                  f", mean {mean:.1f}%")
@@ -364,7 +370,7 @@ def main():
         result = load_model_predictions(cfg)
         results.append(result)
 
-    print("\n[INFO] All synthetic_data_1 loaded. Generating reliability diagram …")
+    print("\n[INFO] All dataset loaded. Generating reliability diagram …")
     plot_reliability(results, OUTPUT_PLOT_PATH)
     print(f"[DONE] {os.path.abspath(OUTPUT_PLOT_PATH)}")
 

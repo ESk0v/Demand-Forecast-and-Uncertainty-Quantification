@@ -130,7 +130,7 @@ def plot_coverage_per_horizon(q10_test, q90_test, tgt_test, save_path, alpha=0.1
                lw=1.2, label=f"General coverage: {gen_cov:.2f}%")
     ax.set_xticks(day_ticks)
     ax.set_xticklabels(day_labels, rotation=45, ha="right")
-    ax.set_ylim(75, 100)
+    ax.set_ylim(65, 100)
     ax.set_xlabel("Forecast Horizon")
     ax.set_ylabel("Coverage (%)")
     ax.set_title("Average Coverage per Horizon")
@@ -143,8 +143,8 @@ def plot_coverage_per_horizon(q10_test, q90_test, tgt_test, save_path, alpha=0.1
 # ──────────────────────────────────────────────────────────────────────────────
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint", required=True, help="Path to model.pt (e.g., Model_5/checkpoints/model.pt)")
-    p.add_argument("--dataset", default="Model_5/data/dataset.pt", help="Path to dataset.pt")
+    p.add_argument("--checkpoint", required=True, help="Path to model.pt (e.g., Model_5/original/model.pt)")
+    p.add_argument("--dataset", default="data/dataset.pt", help="Path to dataset.pt")
     p.add_argument("--batch-size", type=int, default=512)
     p.add_argument("--alpha", type=float, default=None, help="Override conformal alpha")
     args = p.parse_args()
