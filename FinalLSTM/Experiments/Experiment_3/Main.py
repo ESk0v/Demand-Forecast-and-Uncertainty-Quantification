@@ -25,6 +25,14 @@ def set_seed(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark     = False
 
+
+def _split_ratios_for_dataset(dataset_path: str):
+    dataset_name = os.path.basename(dataset_path)
+    if dataset_name == "dataset.pt":
+        return 1 / 12, 1 / 12, 1 / 6
+    return 1 / 12, 1 / 12, 1 / 6
+
+
 MODEL_CONFIGS = [
     # dict(
     #     name = "Model_1 Decoupled - Detach",
@@ -36,21 +44,21 @@ MODEL_CONFIGS = [
     #     patience = 10,
     #     training_variant = "decoupled",
     # ),
-    # dict(
-    #     name = "Model_2 Decoupled - No Detach",
-    #     module_dir ="Model_2_decoupled_no_detach",
-    #     dataset_path = "data/dataset.pt",
-    #     model_save_path = "Model_2_decoupled_no_detach/original/model.pt",
-    #     conformal_alpha = 0.10,
-    #     epochs = 20,
-    #     patience = 10,
-    #     training_variant = "decoupled",
-    # ),
+    dict(
+        name = "Model_2 Decoupled - No Detach",
+        module_dir ="Model_2_decoupled_no_detach",
+        dataset_path = "data/dataset.pt",
+        model_save_path = "Model_2_decoupled_no_detach/original/model.pt",
+        conformal_alpha = 0.10,
+        epochs = 20,
+        patience = 10,
+        training_variant = "decoupled",
+    ),
     # dict(
     #    name = "Model_3 Coupled - 2 loss functions",
     #    module_dir = "Model_3_coupled_2loss",
-    #    dataset_path = "data/dataset_syn3.pt",
-    #    model_save_path = "Model_3_coupled_2loss/synthetic_data_3/model_coupled.pt",
+    #    dataset_path = "data/dataset.pt",
+    #    model_save_path = "Model_3_coupled_2loss/original/model_coupled.pt",
     #    conformal_alpha = 0.10,
     #    epochs = 20,
     #    patience = 10,
@@ -59,8 +67,8 @@ MODEL_CONFIGS = [
     # dict(
     #     name = "Model_4 Coupled - 2 sub-loss function",
     #     module_dir = "Model_4_coupled_2subloss",
-    #     dataset_path = "data/dataset_syn3.pt",
-    #     model_save_path = "Model_4_coupled_2subloss/synthetic_data_3/model_coupled.pt",
+    #     dataset_path = "data/dataset.pt",
+    #     model_save_path = "Model_4_coupled_2subloss/original/model_coupled.pt",
     #     conformal_alpha = 0.10,
     #     epochs = 20,
     #     patience = 10,
@@ -69,8 +77,8 @@ MODEL_CONFIGS = [
     # dict(
     #      name = "Model_5 Coupled - 1 loss function",
     #      module_dir = "Model_5_coupled_1loss",
-    #      dataset_path = "data/dataset_syn3.pt",
-    #      model_save_path = "Model_5_coupled_1loss/synthetic_data_3/model_coupled.pt",
+    #      dataset_path = "data/dataset.pt",
+    #      model_save_path = "Model_5_coupled_1loss/original/model_coupled.pt",
     #      conformal_alpha = 0.10,
     #      epochs = 20,
     #      patience = 10,
@@ -126,16 +134,16 @@ MODEL_CONFIGS = [
     #    patience = 10,
     #    training_variant = "decoupled",
     #),
-    dict(
-        name = "Model_11",
-        module_dir ="Model_11",
-        dataset_path = "data/dataset.pt",
-        model_save_path = "Model_11/original/model.pt",
-        conformal_alpha = 0.10,
-        epochs = 20,
-        patience = 5,
-        training_variant = "decoupled",
-    ),
+    # dict(
+    #     name = "Model_11",
+    #     module_dir ="Model_11",
+    #     dataset_path = "data/dataset.pt",
+    #     model_save_path = "Model_11/original/model.pt",
+    #     conformal_alpha = 0.10,
+    #     epochs = 20,
+    #     patience = 5,
+    #     training_variant = "decoupled",
+    # ),
 ]
 
 
@@ -159,7 +167,7 @@ def _load_module_from_file(module_name: str, file_path: str):
     return module
 
 
-def _experiment3_split_indices(n_total, val_ratio=1 / 12, cal_ratio=1 / 12, test_ratio=1 / 6):
+def _experiment3_split_indices(n_total, val_ratio=1 / 10, cal_ratio=1 / 10, test_ratio=1 / 10):
     """
     Reproduce Model_3's chronological split:
       train, val, cal, test (val and cal intentionally overlap).
@@ -220,12 +228,21 @@ def train_one_model(cfg: dict):
     if not os.path.isfile(dataset_path):
         raise FileNotFoundError(
             f"Dataset not found: {dataset_path}\n"
-            f"Place your dataset_syn1.pt inside {os.path.join(abs_module_dir, 'data')}"
+            f"Place your dataset.pt inside {os.path.join(abs_module_dir, 'data')}"
         )
+
+    val_ratio, cal_ratio, test_ratio = _split_ratios_for_dataset(dataset_path)
+    logger.info(
+        f"[{cfg['name']}] Split ratios: val={val_ratio:.6f}, "
+        f"cal={cal_ratio:.6f}, test={test_ratio:.6f}"
+    )
 
     (train_dataset, val_dataset, cal_dataset, test_dataset,
      train_size, val_size, cal_size, test_size) = load_and_split_dataset(
-        dataset_path
+        dataset_path,
+        val_ratio=val_ratio,
+        cal_ratio=cal_ratio,
+        test_ratio=test_ratio,
     )
 
     config        = Config()
