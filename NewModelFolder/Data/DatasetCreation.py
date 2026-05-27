@@ -175,6 +175,177 @@ def _compute_local_trend(df, missing_idx, valid_mask):
     return trend_value
 
 
+def _interpolate_abvaerk_knn(df, k=4, temp_range_std=2.0):
+    """
+    Interpolate missing abvaerk values using day-of-week preference + local trend blending.
+
+    Strategy:
+    1. For each missing value, find neighbors from SAME HOUR + SAME WEEKDAY in past data
+    2. Further filter by temperature similarity and season
+    3. Use weighted average of nearest neighbors
+    4. Blend with local trend (70% KNN + 30% local trend) for smoothness
+
+    This preserves both daily heating patterns AND weekday/weekend differences,
+    while keeping interpolated values smooth with their neighbors.
+    """
+    df = df.copy()
+    missing_mask = df['abvaerk'].isna()
+
+    if not missing_mask.any():
+        return df
+
+    valid_mask = ~missing_mask
+    missing_indices = np.where(missing_mask)[0]
+
+    # Temperature stats
+    temp_std_raw = df['toutdoor'].std()
+    temp_std = temp_std_raw if temp_std_raw > 1e-8 else 1.0
+
+    for missing_idx in missing_indices:
+        current_date = df.iloc[missing_idx]['dateTime']
+        current_hour = current_date.hour
+        current_weekday = current_date.weekday()
+        current_month = current_date.month
+        current_temp = df.iloc[missing_idx]['toutdoor']
+
+        # Month range: current month ±1 (seasonal consistency)
+        month_range = [(current_month - 2) % 12 + 1, current_month, (current_month) % 12 + 1]
+
+        # Strategy 1: Same hour + SAME WEEKDAY + same season + temperature
+        past_mask = (
+            (valid_mask) &
+            (df['dateTime'] < current_date) &  # Only past data
+            (df['dateTime'].dt.hour == current_hour) &  # SAME HOUR OF DAY
+            (df['dateTime'].dt.weekday == current_weekday) &  # SAME WEEKDAY (critical!)
+            (df['dateTime'].dt.month.isin(month_range))  # Same season
+        )
+
+        # Temperature similarity filter around current temperature (±temp_range_std std devs)
+        if not pd.isna(current_temp):
+            temp_min = current_temp - temp_range_std * temp_std
+            temp_max = current_temp + temp_range_std * temp_std
+            past_mask = past_mask & (df['toutdoor'] >= temp_min) & (df['toutdoor'] <= temp_max)
+
+        # Fallback 1: If no same-weekday match, try same hour + season only
+        if not past_mask.any():
+            past_mask = (
+                (valid_mask) &
+                (df['dateTime'] < current_date) &
+                (df['dateTime'].dt.hour == current_hour) &
+                (df['dateTime'].dt.month.isin(month_range))
+            )
+
+        # Fallback 2: If still no data, try same hour (any month/weekday)
+        if not past_mask.any():
+            past_mask = (
+                (valid_mask) &
+                (df['dateTime'] < current_date) &
+                (df['dateTime'].dt.hour == current_hour)
+            )
+
+        # Fallback 3: Use all past data
+        if not past_mask.any():
+            past_mask = (valid_mask) & (df['dateTime'] < current_date)
+
+        if not past_mask.any():
+            # Absolute fallback: use all valid data
+            past_mask = valid_mask
+
+        y_valid = df.loc[past_mask, 'abvaerk'].values
+
+        if len(y_valid) == 0:
+            continue
+
+        # Compute KNN interpolation
+        if len(y_valid) < k:
+            # Not enough neighbors, use simple average
+            knn_value = np.mean(y_valid)
+        else:
+            # Compute distance based on temperature similarity
+            temps_valid = df.loc[past_mask, 'toutdoor'].values
+
+            if not pd.isna(current_temp):
+                # Distance = temperature difference (prefer matches with similar temp)
+                distances = np.abs(temps_valid - current_temp)
+
+                # Find k nearest neighbors
+                k_nearest_idx = np.argsort(distances)[:k]
+                neighbor_values = y_valid[k_nearest_idx]
+                neighbor_distances = distances[k_nearest_idx]
+
+                # Inverse distance weighting
+                weights = 1.0 / (neighbor_distances + 1e-10)
+                weights /= weights.sum()
+                knn_value = np.sum(weights * neighbor_values)
+            else:
+                # No temperature available, use average of k recent values
+                knn_value = np.mean(y_valid[-k:])
+
+        # Strategy 2: Blend with local trend for smoothness
+        # Compute local trend from surrounding valid data
+        local_trend = _compute_local_trend(df, missing_idx, valid_mask)
+
+        if local_trend is not None:
+            # Blend: 70% KNN + 30% local trend
+            interpolated_value = 0.7 * knn_value + 0.3 * local_trend
+        else:
+            # No local trend available, use KNN value directly
+            interpolated_value = knn_value
+
+        df.loc[missing_idx, 'abvaerk'] = interpolated_value
+
+    # Final fallback: linear interpolation for any remaining NaNs
+    df['abvaerk'] = df['abvaerk'].interpolate(method='linear').bfill().ffill()
+
+    return df
+
+
+def _compute_local_trend(df, missing_idx, valid_mask):
+    """
+    Compute local trend from valid data before and after the missing point.
+
+    Returns the trend at the missing point based on surrounding data.
+    Returns None if insufficient neighbors.
+    """
+    # Look up to 24 hours before and after for valid data
+    before_idx = None
+    after_idx = None
+
+    # Find last valid point before
+    for i in range(missing_idx - 1, max(-1, missing_idx - 25), -1):
+        if i >= 0 and valid_mask.iloc[i]:
+            before_idx = i
+            break
+
+    # Find first valid point after
+    for i in range(missing_idx + 1, min(len(df), missing_idx + 25)):
+        if valid_mask.iloc[i]:
+            after_idx = i
+            break
+
+    # Need at least one neighbor
+    if before_idx is None and after_idx is None:
+        return None
+
+    # If only one neighbor, return its value
+    if before_idx is None:
+        return float(df.iloc[after_idx]['abvaerk'])
+    if after_idx is None:
+        return float(df.iloc[before_idx]['abvaerk'])
+
+    # Linear interpolation between before and after
+    val_before = float(df.iloc[before_idx]['abvaerk'])
+    val_after = float(df.iloc[after_idx]['abvaerk'])
+    dist_before = missing_idx - before_idx
+    dist_after = after_idx - missing_idx
+    total_dist = dist_before + dist_after
+
+    # Weighted average based on distance
+    trend_value = (val_after * dist_before + val_before * dist_after) / total_dist
+
+    return trend_value
+
+
 def main(filePaths=None, logger=None):
     csv_file    = filePaths[0]
     output_path = filePaths[1]
@@ -323,6 +494,7 @@ def main(filePaths=None, logger=None):
         return pd.concat([df, time_features], axis=1)
 
     df = get_time_features(df)
+    horizon_index = np.linspace(0, 1, forecast_length, dtype=np.float32).reshape(-1, 1)
 
     # -----------------------------
     # Build tensors
@@ -364,6 +536,7 @@ def main(filePaths=None, logger=None):
         decoder_slice = np.concatenate([
             decoder_time_slice,      # (168, 6)
             decoder_forecast_slice,  # (168, 5)
+            horizon_index            # (168, 1)
         ], axis=1)                   # → (168, 12)
 
         # Target: future demand
