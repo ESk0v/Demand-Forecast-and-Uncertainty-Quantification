@@ -41,7 +41,7 @@ MODEL_CONFIGS = [
     #     model_save_path = "Model_1_decoupled_detach/original/model.pt",
     #     conformal_alpha = 0.10,
     #     epochs = 20,
-    #     patience = 10,
+    #     patience = 5,
     #     training_variant = "decoupled",
     # ),
     dict(
@@ -51,7 +51,7 @@ MODEL_CONFIGS = [
         model_save_path = "Model_2_decoupled_no_detach/original/model.pt",
         conformal_alpha = 0.10,
         epochs = 20,
-        patience = 10,
+        patience = 5,
         training_variant = "decoupled",
     ),
     # dict(
@@ -61,7 +61,7 @@ MODEL_CONFIGS = [
     #    model_save_path = "Model_3_coupled_2loss/original/model_coupled.pt",
     #    conformal_alpha = 0.10,
     #    epochs = 20,
-    #    patience = 10,
+    #    patience = 5,
     #    training_variant = "coupled",
     # ),
     # dict(
@@ -71,7 +71,7 @@ MODEL_CONFIGS = [
     #     model_save_path = "Model_4_coupled_2subloss/original/model_coupled.pt",
     #     conformal_alpha = 0.10,
     #     epochs = 20,
-    #     patience = 10,
+    #     patience = 5,
     #     training_variant = "coupled",
     # ),
     # dict(
@@ -81,7 +81,7 @@ MODEL_CONFIGS = [
     #      model_save_path = "Model_5_coupled_1loss/original/model_coupled.pt",
     #      conformal_alpha = 0.10,
     #      epochs = 20,
-    #      patience = 10,
+    #      patience = 5,
     #      training_variant = "coupled",
     #  ),
     #dict(
@@ -91,7 +91,7 @@ MODEL_CONFIGS = [
     #     model_save_path = "Model_6/original/model.pt",
     #     conformal_alpha = 0.10,
     #     epochs = 20,
-    #     patience = 10,
+    #     patience = 5,
     #     training_variant = "decoupled",
     # ),
     # dict(
@@ -101,7 +101,7 @@ MODEL_CONFIGS = [
     #    model_save_path = "Model_7/original/model.pt",
     #    conformal_alpha = 0.10,
     #    epochs = 50,
-    #    patience = 10,
+    #    patience = 5,
     #    training_variant = "decoupled",
     # ),
     # dict(
@@ -131,7 +131,7 @@ MODEL_CONFIGS = [
     #    model_save_path = "Model_10/original/model.pt",
     #    conformal_alpha = 0.10,
     #    epochs = 20,
-    #    patience = 10,
+    #    patience = 5,
     #    training_variant = "decoupled",
     #),
     # dict(

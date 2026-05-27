@@ -83,7 +83,7 @@ class LSTMForecast(nn.Module):
 
         self.uncertaintyDecoderLstm = nn.LSTM(
             input_size=config.decoder_features,
-            hidden_size=config.hidden_size,
+            hidden_size=config.hidden_size, #// 2,
             num_layers=1,
             batch_first=True,
             dropout=0.0

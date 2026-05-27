@@ -136,9 +136,9 @@ DATASET_SPECS = {
     "original": dict(
         file="data/dataset.pt",
         run_dir="original",
-        val_ratio=0.10,
-        cal_ratio=0.10,
-        test_ratio=0.10,
+        val_ratio=1.0 / 12.0,
+        cal_ratio=1.0 / 12.0,
+        test_ratio=1.0 / 6.0,
         overlap_val_cal=True,
         title="dataset.pt",
     ),
@@ -172,10 +172,10 @@ DATASET_SPECS = {
 }
 
 METRIC_SPECS = [
-    ("mae", "MAE", "MAE"),
-    ("winkler_mean", "Mean Winkler Score", "Winkler"),
-    ("coverage_abs_dev_mean", "Coverage MAD", "CoverageMAD"),
     ("cosine_over_target", "Gradient Cosine", "CosineΔ"),
+    ("mae", "MAE", "MAE"),
+    ("coverage_abs_dev_mean", "Coverage MAD", "CoverageMAD"),
+    ("winkler_mean", "Mean Winkler Score", "Winkler"),
 ]
 
 METRIC_HATCHES = ["", "\\\\", "//", "xx"]
@@ -365,31 +365,48 @@ def plot_model_comparison(results: list[dict], save_path: str):
     width = 0.18
     offsets = (np.arange(n_metrics) - (n_metrics - 1) / 2.0) * width
 
-    all_values = []
-    for key, _, _ in METRIC_SPECS:
-        all_values.extend([r[key] for r in results])
+    left_metric_keys = {"mae", "cosine_over_target"}
+    right_metric_keys = {"winkler_mean", "coverage_abs_dev_mean"}
 
-    raw_min = min(all_values) if all_values else 0.0
-    raw_max = max(all_values) if all_values else 1.0
-    span = max(raw_max - raw_min, 1.0)
-    if raw_min >= 0:
-        y_min = 0.0
+    left_values = []
+    right_values = []
+    for key, _, _ in METRIC_SPECS:
+        if key in left_metric_keys:
+            left_values.extend([r[key] for r in results])
+        elif key in right_metric_keys:
+            right_values.extend([r[key] for r in results])
+
+    left_raw_min = min(left_values) if left_values else 0.0
+    left_raw_max = max(left_values) if left_values else 3.0
+    left_span = max(left_raw_max - left_raw_min, 1.0)
+    if left_raw_min >= 0:
+        left_y_min = 0.0
     else:
-        y_min = raw_min - 0.15 * span
-    y_max = raw_max + 0.15 * span
+        left_y_min = left_raw_min - 0.10 * left_span
+    left_y_max = max(3.0, left_raw_max + 0.10 * left_span)
+
+    right_raw_min = min(right_values) if right_values else 0.0
+    right_raw_max = max(right_values) if right_values else 1.0
+    right_span = max(right_raw_max - right_raw_min, 1.0)
+    if right_raw_min >= 0:
+        right_y_min = 0.0
+    else:
+        right_y_min = right_raw_min - 0.15 * right_span
+    right_y_max = right_raw_max + 0.15 * right_span
 
     fig, ax = plt.subplots(figsize=(12, 8))
     fig.patch.set_facecolor("#fbfbfd")
     ax.set_facecolor("#fbfbfd")
-
-    label_base_offset = 0.015 * (y_max - y_min)
+    ax_right = ax.twinx()
+    ax_right.set_facecolor("none")
 
     # Set bars and labels
     for i, (key, _, short_label) in enumerate(METRIC_SPECS):
         values = [r[key] for r in results]
         bar_colors = [r["color"] for r in results]
         x_shift = (-1 if i < 2 else 1) * (0.14 * width)
-        bars = ax.bar(
+        target_ax = ax_right if key in right_metric_keys else ax
+        bars = target_ax.bar(
             x + offsets[i],
             values,
             width=width,
@@ -422,14 +439,19 @@ def plot_model_comparison(results: list[dict], save_path: str):
         #     )
 
     ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
     ax.spines["left"].set_color("#6f6f6f")
     ax.spines["bottom"].set_color("#6f6f6f")
+    ax_right.spines["top"].set_visible(False)
+    ax_right.spines["right"].set_color("#6f6f6f")
     ax.set_xticks([])
     # ax.set_xticklabels(names, rotation=12, ha="right")
-    ax.set_ylabel("Metric value")
+    ax.set_ylabel("MAE / Gradient Cosine", fontsize=14)
+    ax_right.set_ylabel("Mean Winkler Score / Coverage MAD", fontsize=14)
+    ax.tick_params(axis="y", labelsize=14)
+    ax_right.tick_params(axis="y", labelsize=14)
     ax.set_title(f"Model Architecture Comparison", fontsize=20)
-    ax.set_ylim(y_min, y_max)
+    ax.set_ylim(left_y_min, left_y_max)
+    ax_right.set_ylim(right_y_min, right_y_max)
     ax.grid(True, axis="y", alpha=0.25, linestyle="--", linewidth=0.8)
     ax.set_axisbelow(True)
 

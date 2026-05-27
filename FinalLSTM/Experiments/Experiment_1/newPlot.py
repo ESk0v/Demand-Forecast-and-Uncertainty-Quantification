@@ -50,8 +50,8 @@ def load_splits(dataset_path, val_ratio=None, cal_ratio=None, test_ratio=None):
     full = TensorDataset(ds["encoder"], ds["decoder"], ds["target"])
 
     # Keep the same chronological ratio-based split used in training.
-    val_ratio  = (1 / 10) if val_ratio is None else val_ratio
-    test_ratio = (1 / 10) if test_ratio is None else test_ratio
+    val_ratio  = (1 / 6) if val_ratio is None else val_ratio
+    test_ratio = (1 / 6) if test_ratio is None else test_ratio
 
     n_total = len(full)
     n_test  = int(n_total * test_ratio)

@@ -7,27 +7,16 @@ from matplotlib.lines import Line2D
 from LSTMModel import LSTMForecast
 
 
-def _split_ratios_for_dataset(dataset_path):
-    dataset_name = os.path.basename(dataset_path)
-    if dataset_name == "dataset.pt":
-        return 1 / 20, 1 / 20, 1 / 10
-    return 1 / 12, 1 / 12, 1 / 6
-
-
-def load_and_split_dataset(dataset_path, val_ratio=None, cal_ratio=None, test_ratio=None):
+def load_and_split_dataset(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
     """
     Chronological 4-way split — no data leakage.
 
     val and cal intentionally use the same valcal pool (overlap).
     Neither set updates model weights.
 
-    Effective proportions by dataset:
-      dataset.pt       -> train=70%  val=20%  cal=20%(same rows as val)  test=10%
-      dataset_syn*.pt  -> train=66.7%  val=16.7%  cal=16.7%(same rows as val)  test=16.7%
+    Effective proportions with defaults:
+      train=66.7%  val=16.7%  cal=16.7%(same rows as val)  test=16.7%
     """
-    if val_ratio is None or cal_ratio is None or test_ratio is None:
-        val_ratio, cal_ratio, test_ratio = _split_ratios_for_dataset(dataset_path)
-
     dataset = torch.load(dataset_path, weights_only=False)
 
     encoder_data = dataset['encoder']
