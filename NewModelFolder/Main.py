@@ -65,7 +65,7 @@ def ensure_dataset_exists(local=False, logger=None):
     if not os.path.exists(filePaths[1]):
         logger.info("Dataset not found, Creating a new dataset")
 
-        create_dataset(local=local, filePaths=filePaths, logger=logger)
+        create_dataset(filePaths=filePaths, logger=logger)
 
         if os.path.exists(filePaths[1]):
             logger.success("Dataset created successfully")
