@@ -164,7 +164,7 @@ def _plot_week(save_path, q10, q50, q90, target, week_idx, metrics, date_start, 
     plt.figure(figsize=(14, 6))
     plt.plot(hours, target, color="blue", linewidth=1.5, label="Actual")
     plt.plot(hours, q50, color="red", linewidth=1.5, label="Median (q50)")
-    plt.fill_between(hours, q10, q90, color="red", alpha=0.18, label="Uncertainty bound")
+    plt.fill_between(hours, q10, q90, color="red", alpha=0.18, label="Uncertainty band")
     plt.title(
         f"Date range: {date_start.strftime('%Y-%m-%d %H:%M')} to {date_end.strftime('%Y-%m-%d %H:%M')}"
     )
