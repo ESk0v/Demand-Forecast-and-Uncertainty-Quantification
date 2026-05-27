@@ -1,0 +1,11 @@
+# requirements_local.txt
+
+torch==2.10.0
+torchvision==0.25.0
+torchaudio==2.10.0
+numpy==1.25.2
+optuna==3.3.0
+tqdm==4.66.1
+plotly==5.20.0
+setuptools>=70.0.0
+wheel>=0.40.0
