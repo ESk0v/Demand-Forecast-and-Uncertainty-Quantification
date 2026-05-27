@@ -20,3 +20,14 @@ venv/
 /.venv313/
 *.DS_Store
 .idea
+/FinalLSTM/Experiments/Experiment_1/data/dataset.pt
+/FinalLSTM/Experiments/Experiment_4/data/dataset.pt
+/FinalLSTM/Experiments/Experiment_3/data/dataset.pt
+/FinalLSTM/Experiments/Experiment_3/data/dataset_syn1.pt
+/FinalLSTM/Experiments/Experiment_3/data/dataset_syn2.pt
+/FinalLSTM/Experiments/Experiment_3/data/dataset_syn3.pt
+/FinalLSTM/Experiments/Experiment_3/data/RingkøbingData.csv
+/FinalLSTM/Experiments/Experiment_3/data/RingkøbingData_2.csv
+/FinalLSTM/Experiments/Experiment_3/data/synthetic_S00_mixed.csv
+/NewModelFolder/Files/Aalborg_Weather_2017_2022_Formatted.csv
+/NewModelFolder/Files/synthetic_S00_mixed.csv
