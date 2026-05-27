@@ -7,27 +7,16 @@ from matplotlib.lines import Line2D
 from LSTMModel import LSTMForecast
 
 
-def _split_ratios_for_dataset(dataset_path):
-    dataset_name = os.path.basename(dataset_path)
-    if dataset_name == "dataset.pt":
-        return 1 / 12, 1 / 12, 1 / 6
-    return 1 / 12, 1 / 12, 1 / 6
-
-
-def load_and_split_dataset(dataset_path, val_ratio=None, cal_ratio=None, test_ratio=None):
+def load_and_split_dataset(dataset_path, val_ratio=1/12, cal_ratio=1/12, test_ratio=1/6):
     """
     Chronological 4-way split — no data leakage.
 
     val and cal intentionally use the same valcal pool (overlap).
     Neither set updates model weights.
 
-    Effective proportions by dataset:
-      dataset.pt       -> train=70%  val=20%  cal=20%(same rows as val)  test=10%
-      dataset_syn*.pt  -> train=66.7%  val=16.7%  cal=16.7%(same rows as val)  test=16.7%
+    Effective proportions with defaults:
+      train=66.7%  val=16.7%  cal=16.7%(same rows as val)  test=16.7%
     """
-    if val_ratio is None or cal_ratio is None or test_ratio is None:
-        val_ratio, cal_ratio, test_ratio = _split_ratios_for_dataset(dataset_path)
-
     dataset = torch.load(dataset_path, weights_only=False)
 
     encoder_data = dataset['encoder']
@@ -147,8 +136,7 @@ def train_epoch(model, train_loader, optimizer_point, optimizer_spread, device, 
         loss_interval = interval_score_loss(q10, q90, tgt, alpha=conformal_alpha)
         cos_sim = compute_encoder_cosine_similarity(model, loss_median, loss_interval)
         step_cos_sims.append(cos_sim)
-        # Model_1 is detach-only: crossing penalty uses detached median anchor.
-        q50_for_cross = q50.detach()
+        q50_for_cross = q50.detach() if getattr(model, "training_variant", "decoupled") == "decoupled" else q50
         crossing_penalty = (
             torch.mean(torch.relu(q10 - q50_for_cross)) + torch.mean(torch.relu(q50_for_cross - q90))
         ) * 0.1
@@ -502,9 +490,9 @@ def train_model(
     model_save_path,
     dataset_path,
     logger=None,
-    patience=20,
-    conformal_alpha=0.2,
-    model_name="Model_1 Decoupled - Detach",
+    patience=10,
+    conformal_alpha=0.1,
+    model_name="Model_4 Decoupled",
     training_variant="decoupled",
 ):
     """
@@ -522,10 +510,6 @@ def train_model(
         raise ValueError(
             f"Unknown training_variant='{training_variant}'. "
             "Expected 'coupled' or 'decoupled'."
-        )
-    if training_variant != "decoupled":
-        raise ValueError(
-            f"Model_1_decoupled_detach supports only training_variant='decoupled', got '{training_variant}'."
         )
 
     config.training_variant = training_variant

@@ -17,10 +17,11 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
         train_size, val_size, cal_size, test_size = load_and_split_dataset(dataset_path)
 
     unique_total = train_size + val_size + test_size  # cal overlaps val in this split.
-    logger.info(
-        f"Dataset loaded: {train_size} train  {val_size} val  "
-        f"{cal_size} cal(overlap)  {test_size} test  (unique total: {unique_total})"
-    )
+    if logger is not None:
+        logger.info(
+            f"Dataset loaded: {train_size} train  {val_size} val  "
+            f"{cal_size} cal(overlap)  {test_size} test  (unique total: {unique_total})"
+        )
 
     config = Config()
     config.epochs = epochs
@@ -53,13 +54,12 @@ def LSTMMain(filePaths=None, epochs=1, patience=5, logger=None):
         logger=logger,
         patience        = patience,
         conformal_alpha = CONFORMAL_ALPHA,
-        model_name="Model_5 Coupled",
-        training_variant="coupled",
+        model_name="Model_4 Decoupled",
     )
 
     checkpoint = torch.load(model_save_path, weights_only=False)
-    logger.success("LSTM training completed successfully!")
-    logger.info("Training plots generated in run checkpoint folder.")
+    if logger is not None:
+        logger.success("LSTM training completed successfully!")
 
     #generate_training_readme(
     #    plot_dir       = run_dir,
