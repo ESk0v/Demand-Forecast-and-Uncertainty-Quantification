@@ -143,10 +143,9 @@ def load_model_predictions(cfg: dict) -> dict:
             f"Run main.py first to train the model."
         )
 
-    # Load dataset — we only need the test split
-    (_, _,_, test_dataset, _,_, _, _) = load_and_split_dataset(
-        dataset_path, val_ratio=0.1, test_ratio=0.1
-    )
+    # Load dataset — use the model module's default split policy,
+    # matching what main.py used during training.
+    (_, _, _, test_dataset, _, _, _, _) = load_and_split_dataset(dataset_path)
 
     config     = Config()
     device     = "cuda" if torch.cuda.is_available() else "cpu"
